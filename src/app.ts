@@ -36,6 +36,7 @@ import { scanRouter } from "./modules/scanning/scan.routes";
 import { discoveryRouter } from "./modules/discovery/discovery.routes";
 import { agentsRouter } from "./modules/agents/agents.routes";
 import { cspmRouter } from "./modules/cspm/cspm.routes";
+import { sbomRouter } from "./modules/sbom/sbom.routes";
 
 export function createApp() {
   // @clerk/express reads these from process.env itself (that's the whole
@@ -97,6 +98,7 @@ export function createApp() {
   app.use(internalScheduledScansRouter);
   app.use(internalScheduledWatchRouter);
   app.use(cspmRouter);
+  app.use(sbomRouter);
   app.use("/audit-logs", auditRouter);
 
   app.use((err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {

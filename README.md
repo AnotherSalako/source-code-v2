@@ -1014,6 +1014,36 @@ doesn't fit `Finding`'s pentest-workflow shape (no `Test`, no CVSS, no
 retest lifecycle) any more than a `WatchAlert` does; a human reviewing the
 results decides what, if anything, becomes a tracked `Finding`.
 
+## SBOM scanning
+
+`POST /engagements/:id/assets/:assetId/sbom-scan` — upload a real
+`package-lock.json` (npm, `lockfileVersion` 2 or 3), get back real, live
+vulnerability data for its exact resolved dependency versions from
+[OSV.dev](https://osv.dev) (Google-run, free, no API key). Deliberately
+npm-only and lockfile-only for v1 — not "SBOM" in the full CycloneDX/SPDX
+sense, but an exact-version dependency list is what a vulnerability lookup
+actually needs, and `src/modules/sbom/sbom-parser.ts` reads the real lockfile
+format directly rather than requiring a separate export step.
+
+**Two-pass lookup** (`src/modules/sbom/osv-client.ts`): a batched query
+(chunks of 100) against every dependency returns just vulnerability IDs —
+OSV's own batch endpoint is intentionally lightweight — then a second pass
+fetches full details (summary, severity, aliases) only for whatever IDs
+actually came back. Both passes degrade gracefully on failure, same
+precedent as every other external call in this app (VirusTotal, Nmap,
+crt.sh) — a flaky OSV request loses that one result, not the whole scan.
+
+**Computed on demand, like `/findings/clusters`, `/attack-paths`, and CSPM's
+scan route** — nothing is auto-created as a `Finding`; a human reviewing the
+results decides what warrants one.
+
+Live-verified against this project's own real `package-lock.json`: parsed
+423 real dependencies, and a real OSV.dev lookup against a handful of them
+turned up 8 real, `HIGH`-severity denial-of-service advisories against this
+project's own `multer@1.4.5-lts.2` (with real GHSA IDs) — not a synthetic
+test fixture, an actual finding about this codebase's own dependencies,
+surfaced by the feature working correctly.
+
 ## Scheduled scanning
 
 `GET /internal/scheduled-scans` sweeps every verified `WEB`/`API` asset on
@@ -1262,6 +1292,7 @@ PUT    /clients/:id/cloud-credentials        (security_admin; verifies against A
 GET    /clients/:id/cloud-credentials        (security_admin; status only, never the secret)
 DELETE /clients/:id/cloud-credentials        (security_admin)
 POST   /clients/:id/cspm-scan                (security_admin; S3/EC2/IAM read-only checks, computed on demand)
+POST   /engagements/:id/assets/:id/sbom-scan (security_admin; multipart package-lock.json upload -> real OSV.dev lookup)
 GET    /findings/:id
 PATCH  /findings/:id                         (security_admin; status and/or remediationEffort and/or acceptAiRemediationDraft)
 POST   /findings/:id/triage                  (security_admin; on-demand AI draft — see "AI-assisted triage")

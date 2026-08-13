@@ -57,6 +57,9 @@ vi.mock("../../src/modules/cspm/cspm-scanner", () => ({
   runCspmScan: vi.fn().mockResolvedValue([]),
   verifyCredentials: vi.fn().mockResolvedValue({ valid: true }),
 }));
+vi.mock("../../src/modules/sbom/osv-client", () => ({
+  findVulnerabilities: vi.fn().mockResolvedValue([]),
+}));
 vi.mock("../../src/modules/findings/import.service", () => ({
   importScanItems: vi.fn().mockResolvedValue({ createdIds: [], skipped: [] }),
 }));

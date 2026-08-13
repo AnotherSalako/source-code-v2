@@ -83,12 +83,13 @@ a model in the loop.
 **Endpoint agent enrollment + inventory check-in** (`agent/`, see README
 "Endpoint agent enrollment") is the first Jupiter component that isn't this
 Node app at all — a separate Rust CLI, distributed to a client's own
-machines. Still scoped deliberately narrow even after the inventory
-addition: read-only collection only, no remote command execution ever
-without a fresh design pass, no OS-service installation until that's
-explicitly confirmed (registering a background service needs admin/root on
-every platform — flagged, not quietly assumed), no persistent scheduler
-yet either. The interesting design constraint was Jupiter's own hosting:
+machines. Still scoped deliberately narrow even with a background schedule
+now built: read-only collection only, no remote command execution ever
+without a fresh design pass. OS-service installation (Windows Service /
+launchd / systemd) was the one deliberate exception granted real
+admin/root — the single place this agent asks for elevated privilege, once,
+at install time, never again afterward. The interesting design constraint
+was Jupiter's own hosting:
 pure Vercel serverless means no persistent process terminates TLS, so real
 client-certificate mTLS wasn't available — application-layer request
 signing with the device's own Ed25519 key does the same job without

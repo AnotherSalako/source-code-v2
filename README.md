@@ -245,11 +245,12 @@ A separate deployable artifact — `agent/`, a Rust CLI, not part of this
 Node app — that lets a client's own machines enroll against their org,
 prove a persistent cryptographic identity to Jupiter, and report a
 read-only inventory snapshot (OS info, installed software, process names,
-firewall state, network interfaces). **Still deliberately scoped**: no
-remote command execution, no file access, no OS-service installation
-(registering a background service needs admin/root on every platform —
-flagged, not built, pending explicit confirmation), no auto-update. See
-`agent/README.md` for the full scope boundary.
+firewall state, network interfaces) either once (`checkin`) or on a
+repeating schedule (`run`), with OS-service installation (Windows
+Service / macOS LaunchDaemon / Linux systemd unit) so that schedule
+survives a reboot. **Still deliberately scoped**: no remote command
+execution, no file access, no auto-update. See `agent/README.md` for the
+full scope boundary.
 
 Same non-cert design as everything else that needed one built from scratch
 here: no X.509/TLS chain validation anywhere, so a real certificate would
@@ -303,6 +304,23 @@ the machine (Terraform/Packer/cloud-init) added a one-time sudoers grant for
 exactly that command — documented in `agent/README.md`'s "Privilege model"
 section, with the exact sudoers line to add. Missing the grant degrades the
 one field to `"UNAVAILABLE"`, not a failed check-in.
+
+**The schedule, and the one place this agent asks for real elevation.**
+`run` repeats `checkin` on an interval (12h default) until stopped;
+`service install`/`service uninstall` register or remove that loop as an
+actual OS-managed background service — a genuine Windows Service via the
+Service Control Manager, not just a registry entry pointing at an exe (the
+SCM kills anything that doesn't answer its start/stop handshake correctly,
+which is why this goes through the real `windows-service` crate rather
+than a shortcut). This is the one command in the entire agent that needs
+Administrator/root, and it asks for it exactly once, at install time — the
+running service never elevates further than that afterward. Same
+transparency standard as everything else here: live-verified on Windows
+(a real check-in cycle ran and updated `Device.lastCheckInAt`, and
+`service install` run without elevation correctly hit a real Windows
+"Access is denied" from the SCM rather than a fabricated one); the macOS
+and Linux service paths are written against each platform's own
+documented format but unverified — no such machines were available.
 
 See `prisma/schema.prisma`'s "Endpoint agent enrollment" section for the
 `AgentCaKey` / `EnrollmentToken` / `Device` model reasoning, and

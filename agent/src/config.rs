@@ -8,6 +8,15 @@ pub struct AgentConfig {
     pub server_url: String,
     pub device_id: String,
     pub client_id: String,
+    // Set by `service install` so the OS-service entry point (which gets no
+    // meaningful CLI args of our choosing — the SCM/launchd/systemd invoke
+    // the registered command line, not an interactive one) knows what
+    // interval to run at. `#[serde(default)]` matters here: configs written
+    // by earlier versions of this agent (before this field existed) don't
+    // have this key at all, and a missing key must deserialize to `None`,
+    // not fail to parse.
+    #[serde(default)]
+    pub checkin_interval_hours: Option<u64>,
 }
 
 pub fn config_dir() -> Result<PathBuf> {

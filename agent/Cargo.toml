@@ -26,6 +26,11 @@ hostname = "0.4"
 # cross-platform API exists for that); see inventory/software.rs for the
 # per-platform approach there instead.
 sysinfo = "0.32"
+# Cross-platform Ctrl-C/SIGTERM handling for `run`'s interval loop —
+# "termination" enables SIGTERM/SIGHUP on Unix (what systemd sends on
+# `systemctl stop`), not just SIGINT, so a stop request is honored the same
+# way whether a human hits Ctrl-C or systemd/launchd asks it to exit.
+ctrlc = { version = "3", features = ["termination"] }
 
 # Windows/macOS: the real OS credential store (Credential Manager / Keychain)
 # via the `keyring` crate. Linux deliberately excluded — see storage.rs for
@@ -47,3 +52,9 @@ keyring = { version = "3", features = ["windows-native", "apple-native"] }
 # (HKLM\...\Uninstall) — pure Rust, no C toolchain needed.
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
+# Real Windows Service Control Manager integration for `service install` —
+# registers this binary as an actual SCM-managed service (responds to
+# Stop/Shutdown control codes, reports SERVICE_RUNNING back to the SCM),
+# not just a plain exe pointed at by a registry key, which the SCM would
+# kill after its startup timeout for never checking in.
+windows-service = "0.8"

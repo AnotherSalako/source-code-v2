@@ -207,6 +207,43 @@ describe("GET /engagements/:id/findings/clusters — structural dedup + exploita
     await request(app).get("/engagements/eng-a/findings/clusters").set("x-test-user", "tech@beta.com").expect(404);
   });
 
+  it("includes a deterministic falsePositive score/likelihood alongside exploitability, reflecting real test provenance and corroboration", async () => {
+    seedTest({ id: "test-pentest", engagementId: "eng-a", assetId: ASSET_ID, type: "PENTEST", testerId: "user_admin" });
+    seedFinding({
+      id: "verified",
+      testId: "test-pentest",
+      assetId: ASSET_ID,
+      title: "Confirmed SQL injection",
+      severity: "CRITICAL",
+      status: "OPEN",
+      cvssScore: 9.1,
+      reproductionStepsEnc: { iv: "x", ciphertext: "y" } as any,
+    });
+    seedFinding({
+      id: "unverified",
+      testId: "test-a", // VULN_SCAN, per beforeEach
+      assetId: ASSET_ID,
+      title: "Suspicious header anomaly",
+      severity: "LOW",
+      status: "OPEN",
+      cvssScore: null,
+      reproductionStepsEnc: null,
+    });
+
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    const res = await request(app).get("/engagements/eng-a/findings/clusters").set("x-test-user", "admin@example.com").expect(200);
+
+    const verified = res.body.findings.find((f: any) => f.id === "verified");
+    const unverified = res.body.findings.find((f: any) => f.id === "unverified");
+
+    expect(verified.falsePositive.humanVerified).toBe(true);
+    expect(verified.falsePositive.likelihood).toBe("LOW");
+    expect(unverified.falsePositive.humanVerified).toBe(false);
+    expect(unverified.falsePositive.hasReproductionSteps).toBe(false);
+    expect(unverified.falsePositive.hasCvssScore).toBe(false);
+    expect(unverified.falsePositive.score).toBeGreaterThan(verified.falsePositive.score);
+  });
+
   it("groups near-duplicate titles across different assets into one cluster, keeps a dissimilar title separate", async () => {
     const assetB = "dddddddd-dddd-dddd-dddd-dddddddddddd";
     seedAsset({ id: assetB, engagementId: "eng-a", type: "WEB", name: "Second site" });

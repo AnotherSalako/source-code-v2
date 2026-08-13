@@ -912,8 +912,8 @@ rephrasing" is the right next step regardless of which one happened.
 The fourth v2 addition, and deliberately the odd one out: no AI, no schema
 migration, no new environment variable — `src/modules/findings/clustering.ts`
 is a handful of pure, dependency-free functions behind one read endpoint,
-`GET /engagements/:id/findings/clusters`. Two different problems, addressed
-together because they share one pass over the same finding list:
+`GET /engagements/:id/findings/clusters`. Three different problems,
+addressed together because they share one pass over the same finding list:
 
 - **Near-duplicate clustering.** A scanner reports the same underlying issue
   across many assets with slightly different wording ("Missing CSP header
@@ -932,8 +932,24 @@ together because they share one pass over the same finding list:
   returned alongside it, same "never a bare number with no justification"
   rule the AI triage rationale follows above — a reviewer can see *why*
   something ranked where it did, not just that it did.
+- **False-positive scoring** (`src/modules/findings/false-positive-score.ts`)
+  — a deterministic complement to the AI triage's own
+  `aiFalsePositiveLikelihood`, same relationship exploitability scoring
+  has to the AI remediation draft. Starts from a baseline set by real test
+  provenance (`PENTEST`/`COMPLIANCE_REVIEW` — a person already looked at
+  this — score much lower than `VULN_SCAN`, nobody's confirmed it by hand
+  yet), penalizes findings missing reproduction steps or a CVSS score
+  (harder to independently verify from what's actually recorded), and
+  discounts findings corroborated by near-duplicates elsewhere (reuses the
+  same clustering pass — a systemic pattern repeated across many assets is
+  real evidence, not scanner noise). Deliberately asymmetric on that last
+  point: a *singleton* finding is never penalized for being unique — being
+  corroborated is evidence something's real; not being corroborated isn't
+  evidence it's fake. Same `LOW`/`MEDIUM`/`HIGH` shape as the AI field, so
+  the two can sit side by side without one silently meaning the opposite
+  of the other.
 
-Both are computed fresh on every request rather than persisted or
+All three are computed fresh on every request rather than persisted or
 AI-generated, on purpose: they're deterministic and free, so there's no
 staleness to manage and no reason to gate them behind an explicit trigger
 the way AI-assisted triage is (a model call costs something real; a Jaccard

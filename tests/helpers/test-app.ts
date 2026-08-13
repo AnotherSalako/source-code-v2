@@ -697,7 +697,7 @@ const prismaMock = {
         if (titleContains) all = all.filter((f) => f.title.toLowerCase().includes(titleContains.toLowerCase()));
         return all.map((f) => ({
           ...f,
-          test: { engagementId: testsById.get(f.testId)?.engagementId },
+          test: { engagementId: testsById.get(f.testId)?.engagementId, type: testsById.get(f.testId)?.type },
           asset: assetsById.get(f.assetId),
         }));
       }),

@@ -35,7 +35,7 @@ export function titleSimilarity(a: string, b: string): number {
   return union === 0 ? 0 : intersection / union;
 }
 
-const SIMILARITY_THRESHOLD = 0.5;
+export const SIMILARITY_THRESHOLD = 0.5;
 
 export interface FindingForClustering {
   id: string;

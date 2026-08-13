@@ -13,7 +13,8 @@ import { threatResponse } from "../../threat-response";
 import { notifyIfSevere } from "../../notifications";
 import { triageFinding } from "./triage.service";
 import { aiTriage } from "../../ai";
-import { clusterFindings, computeExploitabilityScore, RankedFinding } from "./clustering";
+import { clusterFindings, computeExploitabilityScore } from "./clustering";
+import { computeFalsePositiveScore } from "./false-positive-score";
 import { resolveNlQuery } from "./nl-query.service";
 import { computeAttackPaths } from "./attack-path.service";
 import { sideEffectLimiter } from "../../middleware/rate-limit";
@@ -279,11 +280,25 @@ findingsRouter.get("/engagements/:engagementId/findings/clusters", requireAuth, 
       status: true,
       assetId: true,
       discoveredAt: true,
+      // reproductionStepsEnc: presence only, never decrypted here — the
+      // false-positive score only needs to know whether reproduction
+      // steps exist, not what they say, so this never triggers a decrypt
+      // or a DECRYPT audit log the way actually reading the finding does.
+      reproductionStepsEnc: true,
       asset: { select: { type: true, inScope: true } },
+      test: { select: { type: true } },
     },
   });
 
-  const ranked: RankedFinding[] = findings.map((f) => ({
+  const fpInputs = findings.map((f) => ({
+    id: f.id,
+    title: f.title,
+    cvssScore: f.cvssScore,
+    hasReproductionSteps: f.reproductionStepsEnc != null,
+    testType: f.test.type,
+  }));
+
+  const ranked = findings.map((f) => ({
     id: f.id,
     title: f.title,
     severity: f.severity,
@@ -292,6 +307,10 @@ findingsRouter.get("/engagements/:engagementId/findings/clusters", requireAuth, 
     assetId: f.assetId,
     discoveredAt: f.discoveredAt,
     exploitability: computeExploitabilityScore(f, f.asset),
+    falsePositive: computeFalsePositiveScore(
+      { id: f.id, title: f.title, cvssScore: f.cvssScore, hasReproductionSteps: f.reproductionStepsEnc != null, testType: f.test.type },
+      fpInputs
+    ),
   }));
   ranked.sort((a, b) => b.exploitability.score - a.exploitability.score);
 

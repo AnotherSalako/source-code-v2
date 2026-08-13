@@ -8,7 +8,7 @@ export function Card({ className, children, ...props }: HTMLAttributes<HTMLDivEl
   return (
     <div
       className={cx(
-        "rounded-[var(--radius-card)] border border-line bg-surface/90 p-6 shadow-[var(--shadow-lift)] backdrop-blur-xl",
+        "rounded-[var(--radius-card)] border border-line bg-[color:var(--color-surface-glass)] p-6 shadow-[var(--shadow-lift)] backdrop-blur-2xl backdrop-saturate-150",
         className
       )}
       {...props}
@@ -54,7 +54,7 @@ export function IconButton({ className, children, ...props }: ButtonHTMLAttribut
   return (
     <button
       className={cx(
-        "flex h-10 w-10 items-center justify-center rounded-full border border-line-soft bg-surface text-ink-soft shadow-[var(--shadow-lift)] transition-colors hover:text-ink",
+        "flex h-10 w-10 items-center justify-center rounded-full border border-line-soft bg-[color:var(--color-surface-glass)] text-ink-soft shadow-[var(--shadow-lift)] backdrop-blur-xl backdrop-saturate-150 transition-colors hover:text-ink",
         className
       )}
       {...props}

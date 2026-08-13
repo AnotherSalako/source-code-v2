@@ -64,10 +64,10 @@ function ClientQuickSearch() {
         }}
         onFocus={() => setOpen(true)}
         placeholder="Search clients…"
-        className="w-full rounded-full border border-line-soft bg-paper py-2.5 pl-10 pr-4 text-sm text-ink outline-none transition-colors placeholder:text-ink-faint focus:border-ink/30 focus:bg-surface"
+        className="w-full rounded-full border border-line-soft bg-[color:var(--color-surface-glass)] py-2.5 pl-10 pr-4 text-sm text-ink shadow-[var(--shadow-lift)] backdrop-blur-xl backdrop-saturate-150 outline-none transition-colors placeholder:text-ink-faint focus:border-ink/30"
       />
       {open && matches.length > 0 && (
-        <div className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-lift-lg)]">
+        <div className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-2xl border border-line bg-[color:var(--color-surface-glass)] shadow-[var(--shadow-lift-lg)] backdrop-blur-2xl backdrop-saturate-150">
           {matches.map((c) => (
             <button
               key={c.id}
@@ -87,7 +87,7 @@ function ClientQuickSearch() {
 function ThemeToggle() {
   const { theme, toggle } = useTheme();
   return (
-    <div className="flex items-center gap-0.5 rounded-full border border-line-soft bg-paper p-1">
+    <div className="flex items-center gap-0.5 rounded-full border border-line-soft bg-[color:var(--color-surface-glass)] p-1 shadow-[var(--shadow-lift)] backdrop-blur-xl backdrop-saturate-150">
       <button
         onClick={() => theme !== "light" && toggle()}
         aria-label="Light mode"
@@ -135,7 +135,7 @@ export function TopBar({ title, subtitle, actions }: { title: string; subtitle?:
         <ClientQuickSearch />
         {actions}
         <ThemeToggle />
-        <div className="flex items-center gap-2.5 rounded-full border border-line-soft bg-surface py-1 pl-1 pr-3 shadow-[var(--shadow-lift)]">
+        <div className="flex items-center gap-2.5 rounded-full border border-line-soft bg-[color:var(--color-surface-glass)] py-1 pl-1 pr-3 shadow-[var(--shadow-lift)] backdrop-blur-xl backdrop-saturate-150">
           {/* Clerk's own avatar + "Manage account" (includes MFA/security settings) + sign-out menu */}
           <UserButton appearance={{ elements: { avatarBox: "h-8 w-8" } }} />
           <div className="leading-tight">

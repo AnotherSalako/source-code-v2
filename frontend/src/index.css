@@ -9,7 +9,10 @@
      signal color reserved for severity/risk — never used decoratively. */
   --color-paper: #f2f1ee;
   --color-surface: #ffffff;
-  --color-surface-glass: rgb(255 255 255 / 0.6);
+  /* Deliberately low alpha — this is what makes the color blooms in
+     Texture.tsx actually read as "behind frosted glass" rather than a
+     flat, barely-tinted white card. */
+  --color-surface-glass: rgb(255 255 255 / 0.42);
   --color-ink: #171614;
   --color-ink-soft: #4a4844;
   --color-ink-faint: #8c8a84;
@@ -25,8 +28,11 @@
   --radius-card: 1.75rem;
   --radius-pill: 999px;
 
-  --shadow-lift: 0 1px 2px rgb(23 22 20 / 0.04), 0 12px 32px -12px rgb(23 22 20 / 0.14);
-  --shadow-lift-lg: 0 2px 4px rgb(23 22 20 / 0.05), 0 24px 48px -16px rgb(23 22 20 / 0.18);
+  /* The inset highlight is the actual "glass" cue — a light catching the
+     top inner edge of a frosted pane. Combined with a translucent
+     background + backdrop-blur (see .glass in components), not shadow alone. */
+  --shadow-lift: inset 0 1px 0 0 rgb(255 255 255 / 0.55), 0 1px 2px rgb(23 22 20 / 0.04), 0 12px 32px -12px rgb(23 22 20 / 0.16);
+  --shadow-lift-lg: inset 0 1px 0 0 rgb(255 255 255 / 0.55), 0 2px 4px rgb(23 22 20 / 0.05), 0 24px 48px -16px rgb(23 22 20 / 0.2);
 }
 
 /* Dark theme: same warm-neutral, restrained-color identity, values inverted
@@ -38,15 +44,15 @@
 :root[data-theme="dark"] {
   --color-paper: #17161a;
   --color-surface: #211f22;
-  --color-surface-glass: rgb(33 31 34 / 0.72);
+  --color-surface-glass: rgb(40 38 42 / 0.48);
   --color-ink: #f3f1ec;
   --color-ink-soft: #c7c3ba;
   --color-ink-faint: #8b877e;
-  --color-line: rgb(243 241 236 / 0.1);
+  --color-line: rgb(243 241 236 / 0.12);
   --color-line-soft: rgb(243 241 236 / 0.06);
 
-  --shadow-lift: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px -12px rgb(0 0 0 / 0.5);
-  --shadow-lift-lg: 0 2px 4px rgb(0 0 0 / 0.35), 0 24px 48px -16px rgb(0 0 0 / 0.6);
+  --shadow-lift: inset 0 1px 0 0 rgb(255 255 255 / 0.09), 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px -12px rgb(0 0 0 / 0.5);
+  --shadow-lift-lg: inset 0 1px 0 0 rgb(255 255 255 / 0.09), 0 2px 4px rgb(0 0 0 / 0.35), 0 24px 48px -16px rgb(0 0 0 / 0.6);
 }
 
 html,

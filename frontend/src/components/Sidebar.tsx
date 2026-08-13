@@ -82,7 +82,7 @@ export function Sidebar() {
   const { user } = useAuth();
 
   return (
-    <aside className="flex h-full w-[76px] shrink-0 flex-col items-center gap-7 rounded-[var(--radius-card)] border border-line bg-surface/90 py-6 shadow-[var(--shadow-lift)] backdrop-blur-xl">
+    <aside className="flex h-full w-[76px] shrink-0 flex-col items-center gap-7 rounded-[var(--radius-card)] border border-line bg-[color:var(--color-surface-glass)] py-6 shadow-[var(--shadow-lift)] backdrop-blur-2xl backdrop-saturate-150">
       <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-ink text-paper">
         <Logomark />
       </span>

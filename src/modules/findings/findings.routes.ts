@@ -13,6 +13,7 @@ import { threatResponse } from "../../threat-response";
 import { notifyIfSevere } from "../../notifications";
 import { triageFinding } from "./triage.service";
 import { aiTriage } from "../../ai";
+import { clusterFindings, computeExploitabilityScore, RankedFinding } from "./clustering";
 
 export const findingsRouter = Router({ mergeParams: true });
 
@@ -205,6 +206,50 @@ findingsRouter.get("/engagements/:engagementId/roadmap", requireAuth, async (req
   });
 
   res.json(bucketed);
+});
+
+// Structural (non-AI) near-duplicate clustering + exploitability ranking —
+// distinct from the per-finding AI triage above: this is deterministic and
+// free (src/modules/findings/clustering.ts), so it's safe to compute on
+// every request rather than something a human has to explicitly trigger.
+// Scoped to findings still worth acting on (OPEN/REMEDIATING/RETESTED_FAIL)
+// — the same "still needs attention" set the roadmap above uses, plus
+// RETESTED_FAIL since a failed fix attempt is still live risk.
+findingsRouter.get("/engagements/:engagementId/findings/clusters", requireAuth, async (req, res) => {
+  const { engagementId } = req.params;
+  const engagement = await prisma.engagement.findUnique({ where: { id: engagementId }, select: { clientId: true } });
+  if (!engagement || !assertOwnOrg(req, engagement.clientId)) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+
+  const findings = await prisma.finding.findMany({
+    where: { test: { engagementId }, status: { in: ["OPEN", "REMEDIATING", "RETESTED_FAIL"] } },
+    select: {
+      id: true,
+      title: true,
+      severity: true,
+      cvssScore: true,
+      status: true,
+      assetId: true,
+      discoveredAt: true,
+      asset: { select: { type: true, inScope: true } },
+    },
+  });
+
+  const ranked: RankedFinding[] = findings.map((f) => ({
+    id: f.id,
+    title: f.title,
+    severity: f.severity,
+    cvssScore: f.cvssScore,
+    status: f.status,
+    assetId: f.assetId,
+    discoveredAt: f.discoveredAt,
+    exploitability: computeExploitabilityScore(f, f.asset),
+  }));
+  ranked.sort((a, b) => b.exploitability.score - a.exploitability.score);
+
+  res.json({ findings: ranked, clusters: clusterFindings(ranked) });
 });
 
 // Role-gated read: exec_client gets severity/status/title only (business risk

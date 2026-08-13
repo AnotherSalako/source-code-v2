@@ -724,6 +724,40 @@ the finding is simply left undrafted — `POST /findings/:id/triage` reports
 creation logs a warning and moves on. A finding never ends up in a partial
 or corrupted state because a model call had a bad day.
 
+## Finding clustering & exploitability ranking
+
+The fourth v2 addition, and deliberately the odd one out: no AI, no schema
+migration, no new environment variable — `src/modules/findings/clustering.ts`
+is a handful of pure, dependency-free functions behind one read endpoint,
+`GET /engagements/:id/findings/clusters`. Two different problems, addressed
+together because they share one pass over the same finding list:
+
+- **Near-duplicate clustering.** A scanner reports the same underlying issue
+  across many assets with slightly different wording ("Missing CSP header
+  on /login" vs. "...on /admin/users") — `titleSimilarity()` (Jaccard
+  similarity over normalized title tokens: paths, numbers, and punctuation
+  stripped) groups these into one cluster instead of leaving a reviewer to
+  spot the pattern across a flat list of a dozen near-identical rows. Greedy
+  single-pass, O(n × clusters), not O(n²).
+- **Exploitability ranking.** Raw scanner severity doesn't capture whether a
+  finding is actually reachable, or how long it's been sitting open.
+  `computeExploitabilityScore()` blends severity/CVSS with whether the
+  asset is internet-facing (`WEB`/`API` + in-scope), days open (capped
+  bonus), and status (`RETESTED_FAIL` counts as fully live risk —  a fix
+  was attempted and didn't hold; `RETESTED_PASS`/`ACCEPTED_RISK` score
+  zero — neither still needs fixing). Every component of the score is
+  returned alongside it, same "never a bare number with no justification"
+  rule the AI triage rationale follows above — a reviewer can see *why*
+  something ranked where it did, not just that it did.
+
+Both are computed fresh on every request rather than persisted or
+AI-generated, on purpose: they're deterministic and free, so there's no
+staleness to manage and no reason to gate them behind an explicit trigger
+the way AI-assisted triage is (a model call costs something real; a Jaccard
+similarity check over a few hundred finding titles doesn't). Scoped to
+findings still worth acting on — `OPEN`, `REMEDIATING`, `RETESTED_FAIL` —
+same set the remediation roadmap above uses, plus `RETESTED_FAIL`.
+
 ## Scheduled scanning
 
 `GET /internal/scheduled-scans` sweeps every verified `WEB`/`API` asset on
@@ -955,6 +989,7 @@ POST   /engagements/:id/tests/:testId/findings (security_admin)
 POST   /engagements/:id/tests/:testId/findings/import (security_admin; bulk, nuclei/normalized)
 GET    /engagements/:id/findings             (?testId= optional filter)
 GET    /engagements/:id/roadmap              (bucketed: quick_win/long_term/plan/uncategorized)
+GET    /engagements/:id/findings/clusters    (near-duplicate clusters + exploitability ranking — see "Finding clustering")
 GET    /findings/:id
 PATCH  /findings/:id                         (security_admin; status and/or remediationEffort and/or acceptAiRemediationDraft)
 POST   /findings/:id/triage                  (security_admin; on-demand AI draft — see "AI-assisted triage")

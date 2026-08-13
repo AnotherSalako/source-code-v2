@@ -64,6 +64,19 @@ separately-provisioned key ARN per tenant, since the app must never call
 `kms:CreateKey` itself (least-privilege IAM, same constraint the system
 key already had).
 
+**Finding clustering & exploitability ranking** (`src/modules/findings/clustering.ts`,
+see README "Finding clustering & exploitability ranking") is the fourth,
+and closes the other half of what "AI triage & dedup" originally named —
+AI-drafted remediation covered the per-finding half; this covers grouping
+near-duplicates and ranking by real exploitability instead of raw scanner
+severity. Deliberately built as structural/deterministic rather than
+another AI call: a Jaccard-similarity title clustering plus an explainable
+scoring formula (severity, internet-facing, age, status), both free and
+instant enough to compute on every request rather than needing a human to
+trigger them the way AI-assisted triage does. Same "never a bare number
+with no justification" discipline as the AI triage rationale, just without
+a model in the loop.
+
 Everything else on the original add-in list is still worth building — see
 "The actual gap in 'blueprint' as a business model" below, which applies to
 feature scope as much as it applies to deployment tooling.

@@ -200,3 +200,60 @@ describe("AI-assisted triage — advisory-only, never auto-applied", () => {
     expect(getRes.body.remediationGuidance).toBe("Disable TLS 1.0/1.1 in the server config and require TLS 1.2+.");
   });
 });
+
+describe("GET /engagements/:id/findings/clusters — structural dedup + exploitability ranking", () => {
+  it("404s when a client-role user requests a DIFFERENT org's engagement", async () => {
+    seedUser({ email: "tech@beta.com", name: "Tech", role: "TECHNICAL_CLIENT", orgId: CLIENT_B });
+    await request(app).get("/engagements/eng-a/findings/clusters").set("x-test-user", "tech@beta.com").expect(404);
+  });
+
+  it("groups near-duplicate titles across different assets into one cluster, keeps a dissimilar title separate", async () => {
+    const assetB = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    seedAsset({ id: assetB, engagementId: "eng-a", type: "WEB", name: "Second site" });
+    seedTest({ id: "test-b", engagementId: "eng-a", assetId: assetB, type: "MANUAL", testerId: "user_admin" });
+
+    seedFinding({ id: "f1", testId: "test-a", assetId: ASSET_ID, title: "Missing CSP header on /login", severity: "MEDIUM", status: "OPEN" });
+    seedFinding({ id: "f2", testId: "test-b", assetId: assetB, title: "Missing CSP header on /admin/users", severity: "MEDIUM", status: "OPEN" });
+    seedFinding({ id: "f3", testId: "test-a", assetId: ASSET_ID, title: "Outdated jQuery version in use", severity: "LOW", status: "OPEN" });
+
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    const res = await request(app).get("/engagements/eng-a/findings/clusters").set("x-test-user", "admin@example.com").expect(200);
+
+    expect(res.body.findings).toHaveLength(3);
+    const cspCluster = res.body.clusters.find((c: any) => c.findingIds.includes("f1"));
+    expect(cspCluster.findingIds.sort()).toEqual(["f1", "f2"]);
+    expect(cspCluster.assetCount).toBe(2);
+    expect(cspCluster.memberCount).toBe(2);
+
+    const jqueryCluster = res.body.clusters.find((c: any) => c.findingIds.includes("f3"));
+    expect(jqueryCluster.findingIds).toEqual(["f3"]);
+    expect(res.body.clusters).toHaveLength(2);
+  });
+
+  it("ranks a CRITICAL open finding on an internet-facing asset above a MEDIUM finding on a non-internet-facing asset", async () => {
+    const networkAsset = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+    seedAsset({ id: networkAsset, engagementId: "eng-a", type: "NETWORK", name: "Internal LAN segment" });
+    seedTest({ id: "test-net", engagementId: "eng-a", assetId: networkAsset, type: "MANUAL", testerId: "user_admin" });
+
+    seedFinding({ id: "critical-web", testId: "test-a", assetId: ASSET_ID, title: "Remote code execution via deserialization", severity: "CRITICAL", status: "OPEN" });
+    seedFinding({ id: "medium-internal", testId: "test-net", assetId: networkAsset, title: "SNMP community string default", severity: "MEDIUM", status: "OPEN" });
+
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    const res = await request(app).get("/engagements/eng-a/findings/clusters").set("x-test-user", "admin@example.com").expect(200);
+
+    expect(res.body.findings[0].id).toBe("critical-web");
+    expect(res.body.findings[0].exploitability.internetFacing).toBe(true);
+    expect(res.body.findings[0].exploitability.score).toBeGreaterThan(res.body.findings[1].exploitability.score);
+  });
+
+  it("excludes RETESTED_PASS and ACCEPTED_RISK findings — nothing still-actionable to rank", async () => {
+    seedFinding({ id: "fixed", testId: "test-a", assetId: ASSET_ID, title: "Fixed already", severity: "HIGH", status: "RETESTED_PASS" });
+    seedFinding({ id: "accepted", testId: "test-a", assetId: ASSET_ID, title: "Accepted risk", severity: "HIGH", status: "ACCEPTED_RISK" });
+    seedFinding({ id: "still-open", testId: "test-a", assetId: ASSET_ID, title: "Still open", severity: "HIGH", status: "OPEN" });
+
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    const res = await request(app).get("/engagements/eng-a/findings/clusters").set("x-test-user", "admin@example.com").expect(200);
+
+    expect(res.body.findings.map((f: any) => f.id)).toEqual(["still-open"]);
+  });
+});

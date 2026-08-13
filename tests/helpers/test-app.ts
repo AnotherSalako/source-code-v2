@@ -574,7 +574,11 @@ const prismaMock = {
         if (testId) all = all.filter((f) => f.testId === testId);
         if (testIdField) all = all.filter((f) => matchWhereField(f.testId, testIdField));
         if (statusIn) all = all.filter((f) => statusIn.includes(f.status));
-        return all.map((f) => ({ ...f, test: { engagementId: testsById.get(f.testId)?.engagementId } }));
+        return all.map((f) => ({
+          ...f,
+          test: { engagementId: testsById.get(f.testId)?.engagementId },
+          asset: assetsById.get(f.assetId),
+        }));
       }),
       create: vi.fn(async ({ data }: any) => {
         const row: FakeFindingRow = {

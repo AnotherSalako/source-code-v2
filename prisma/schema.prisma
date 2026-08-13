@@ -1,0 +1,495 @@
+// Enforcer — one-time cybersecurity assessment platform
+// Data model mirrors the design doc. Fields suffixed `Enc` hold an
+// EncryptedField JSON blob (ciphertext/iv/authTag/encryptedDataKey/keyId/keyVersion)
+// produced by src/crypto/envelope.ts — never plaintext.
+
+generator client {
+  provider      = "prisma-client-js"
+  // "native" covers local dev (Windows/Mac/whatever). rhel-openssl-3.0.x is
+  // required for Vercel specifically — its serverless Node runtime doesn't
+  // reliably match the exact binary produced during the build step, and
+  // without this target the query engine fails to load at cold start
+  // (surfaces as a generic "Serverless Function has crashed" 500, not a
+  // helpful Prisma error, since it happens at PrismaClient construction
+  // time in src/db/prisma.ts, before any request-level error handling runs).
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  EXEC_CLIENT
+  TECHNICAL_CLIENT
+  SECURITY_ADMIN
+}
+
+enum EngagementStatus {
+  SCOPING
+  ACTIVE
+  REPORTING
+  RETEST
+  CLOSED
+}
+
+enum AssetType {
+  WEB
+  MOBILE
+  SERVER
+  CLOUD
+  NETWORK
+  API
+}
+
+enum Criticality {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum TestType {
+  VULN_SCAN
+  PENTEST
+  COMPLIANCE_REVIEW
+}
+
+enum TestStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETE
+}
+
+enum Severity {
+  INFO
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum FindingStatus {
+  OPEN
+  REMEDIATING
+  RETESTED_PASS
+  RETESTED_FAIL
+  ACCEPTED_RISK
+}
+
+enum ComplianceFramework {
+  NDPR
+  ISO27001
+  PCI_DSS
+  OTHER
+}
+
+enum ComplianceStatus {
+  PENDING // loaded from a standard control library, not yet assessed
+  PASS
+  FAIL
+  PARTIAL
+  NOT_APPLICABLE
+}
+
+enum RemediationEffort {
+  QUICK_WIN
+  SMALL
+  MEDIUM
+  LARGE
+}
+
+enum TrainingTopic {
+  PHISHING
+  PASSWORD_HYGIENE
+  DATA_HANDLING
+  APP_INFRA_MISTAKES
+  CUSTOM
+}
+
+enum TrainingStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+enum ReportType {
+  EXECUTIVE
+  TECHNICAL
+  RETEST_ADDENDUM
+}
+
+enum RetestResult {
+  FIXED
+  NOT_FIXED
+  PARTIALLY_FIXED
+}
+
+enum KeyPurpose {
+  DB_FIELD
+  FILE
+}
+
+enum KeyStatus {
+  ACTIVE
+  RETIRED
+  REVOKED
+}
+
+enum AuditAction {
+  VIEW
+  CREATE
+  UPDATE
+  DELETE
+  DOWNLOAD
+  DECRYPT
+  LOGIN
+  LOGIN_FAILED
+}
+
+enum AuditResult {
+  SUCCESS
+  DENIED
+}
+
+enum VerificationMethod {
+  DNS_TXT
+  HTTP_FILE
+  MANUAL // security_admin attests authorization out-of-band (e.g. infra already covered by a signed ROE) — logged with a justification
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+}
+
+enum ScanJobStatus {
+  QUEUED
+  RUNNING
+  COMPLETE
+  FAILED
+}
+
+enum MalwareStatus {
+  PENDING     // check not run yet (or still in flight)
+  CLEAN       // VirusTotal has analyzed this hash/URL and no engine flagged it
+  FLAGGED     // one or more engines flagged it — see malwareDetections
+  UNAVAILABLE // no verdict: VIRUSTOTAL_API_KEY unset, hash/URL unknown to VT, or a lookup error — NOT the same as CLEAN
+}
+
+enum AuthorizationMethod {
+  MANUAL     // security_admin self-attests a paper/out-of-band-signed doc — always available, no provider required
+  ESIGNATURE // sent through an ESignatureProvider and confirmed via its own verified status, not self-attested
+}
+
+enum AuthorizationRequestStatus {
+  SENT
+  SIGNED
+  DECLINED
+  VOIDED
+}
+
+// Identity and credentials (password, MFA, sessions) live in Clerk, not here.
+// This table is the authorization side only — role/orgId — resolved by
+// looking up the Clerk-verified request's email address against `email`
+// (see src/middleware/clerk-auth.ts). A row must exist here before someone
+// who's signed up in Clerk can do anything in the app.
+model User {
+  id          String    @id @default(uuid())
+  name        String
+  email       String    @unique
+  role        Role
+  orgId       String? // clients.id for client-side users; null for internal staff
+  org         Client?   @relation(fields: [orgId], references: [id])
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  auditLogs AuditLog[]
+
+  @@index([orgId])
+}
+
+model Client {
+  id                String   @id @default(uuid())
+  name              String
+  industry          String?
+  primaryContactEnc Json? // EncryptedField
+  billingInfoEnc    Json? // EncryptedField
+  createdAt         DateTime @default(now())
+
+  users       User[]
+  engagements Engagement[]
+}
+
+model Engagement {
+  id                    String           @id @default(uuid())
+  clientId              String
+  client                Client           @relation(fields: [clientId], references: [id])
+  status                EngagementStatus @default(SCOPING)
+  scopeDocRef           String? // object storage key, file itself encrypted at rest
+  assumptionsEnc        Json? // EncryptedField
+  exclusionsEnc         Json? // EncryptedField
+  authorizedBy          String?
+  authorizationSignedAt DateTime?
+  authorizationDocRef   String? // object storage key — encryption metadata below, only set once actually stored (e-signature path)
+  authorizationDocIv               String?
+  authorizationDocAuthTag          String?
+  authorizationDocEncryptedDataKey String?
+  authorizationDocKmsKeyId         String?
+  authorizationDocKeyVersion       Int?
+
+  // E-signature workflow (src/esignature) — populated once "send" is
+  // called; authorizationSignedAt/authorizedBy/authorizationDocRef above
+  // only get set once a "check" confirms the provider actually reports it
+  // signed, same hard gate as the MANUAL path, just verified instead of
+  // self-attested.
+  authorizationMethod        AuthorizationMethod?
+  authorizationEnvelopeId    String?
+  authorizationRequestStatus AuthorizationRequestStatus?
+  startDate             DateTime?
+  endDate               DateTime?
+  createdAt             DateTime         @default(now())
+
+  assets           Asset[]
+  tests            Test[]
+  complianceChecks ComplianceCheck[]
+  reports          Report[]
+  trainingSessions TrainingSession[]
+  scanJobs         ScanJob[]
+
+  @@index([clientId])
+}
+
+model Asset {
+  id            String      @id @default(uuid())
+  engagementId  String
+  engagement    Engagement  @relation(fields: [engagementId], references: [id])
+  type          AssetType
+  name          String
+  identifierEnc Json // EncryptedField — IP/hostname/URL
+  owner         String?
+  criticality   Criticality @default(MEDIUM)
+  inScope       Boolean     @default(true)
+  notesEnc      Json? // EncryptedField
+  createdAt     DateTime    @default(now())
+
+  // Automated scanning (POST .../scan) refuses to run against a WEB/API asset
+  // until this is VERIFIED — proves whoever requested the scan actually
+  // controls the target, not just that they typed a URL into a form. See
+  // src/modules/assets/verification.ts.
+  verificationStatus VerificationStatus  @default(UNVERIFIED)
+  verificationMethod VerificationMethod?
+  verificationToken  String? // random value the client publishes (DNS TXT record or well-known file) to prove control
+  verifiedAt         DateTime?
+  verifiedBy         String? // User.id who confirmed it (the admin who ran the check, or approved the manual override)
+
+  tests    Test[]
+  findings Finding[]
+  scanJobs ScanJob[]
+
+  @@index([engagementId])
+}
+
+model Test {
+  id           String     @id @default(uuid())
+  engagementId String
+  engagement   Engagement @relation(fields: [engagementId], references: [id])
+  assetId      String
+  asset        Asset      @relation(fields: [assetId], references: [id])
+  type         TestType
+  methodology  String?
+  toolUsed     String?
+  testerId     String?
+  status       TestStatus @default(PLANNED)
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime   @default(now())
+
+  findings Finding[]
+  scanJobs ScanJob[]
+
+  @@index([engagementId])
+  @@index([assetId])
+}
+
+// One row per automated scan run (POST /engagements/:id/assets/:assetId/scan).
+// Distinct from Test/Finding: a ScanJob tracks the *run itself* (which tool,
+// how long, did it error) so the dashboard can show live progress, while its
+// results land as ordinary Findings via the same import path used for manual
+// JSONL uploads (src/modules/findings/import.service.ts) — dedup, roadmap,
+// reporting all just work without knowing scans can be triggered in-app.
+model ScanJob {
+  id           String        @id @default(uuid())
+  engagementId String
+  engagement   Engagement    @relation(fields: [engagementId], references: [id])
+  assetId      String
+  asset        Asset         @relation(fields: [assetId], references: [id])
+  testId       String?
+  test         Test?         @relation(fields: [testId], references: [id])
+  tool         String        @default("nuclei")
+  status       ScanJobStatus @default(QUEUED)
+  triggeredById String
+  startedAt     DateTime?
+  completedAt   DateTime?
+  errorMessage  String?
+  findingsCreated Int?
+  findingsSkipped Int?
+  rawResultEnc    Json? // EncryptedField — full scanner JSONL output, kept for audit/evidence even though every item is also normalized into Findings
+  createdAt       DateTime      @default(now())
+
+  @@index([engagementId])
+  @@index([assetId])
+  @@index([status])
+}
+
+model Finding {
+  id                     String        @id @default(uuid())
+  testId                 String
+  test                   Test          @relation(fields: [testId], references: [id])
+  assetId                String
+  asset                  Asset         @relation(fields: [assetId], references: [id])
+  title                  String
+  descriptionEnc         Json // EncryptedField
+  severity               Severity
+  cvssScore              Float?
+  reproductionStepsEnc   Json? // EncryptedField
+  remediationGuidanceEnc Json? // EncryptedField
+  remediationEffort      RemediationEffort? // for the remediation roadmap: quick win vs long-term project
+  status                 FindingStatus @default(OPEN)
+  discoveredAt           DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+
+  evidence Evidence[]
+  retests  Retest[]
+
+  @@index([testId])
+  @@index([assetId])
+}
+
+// One row per uploaded evidence file (screenshot, log, pcap...).
+// The file bytes live encrypted in object storage; this row holds the
+// wrapped-DEK metadata needed to decrypt it, mirroring KeyRef but scoped to one file.
+model Evidence {
+  id               String   @id @default(uuid())
+  findingId        String
+  finding          Finding  @relation(fields: [findingId], references: [id])
+  originalFilename String
+  mimeType         String
+  storageKey       String // path/key in object storage, ciphertext only
+  iv               String
+  authTag          String
+  encryptedDataKey String
+  kmsKeyId         String
+  keyVersion       Int
+  sizeBytes        Int
+  uploadedBy       String
+  uploadedAt       DateTime @default(now())
+
+  // Malware check (src/integrations/virustotal.ts, fired async on upload).
+  // sha256 is a hash of the plaintext bytes — not sensitive, safe to store
+  // unencrypted, and needed to check the file's reputation without ever
+  // decrypting/re-uploading the file itself to a third party.
+  sha256            String?
+  malwareStatus     MalwareStatus @default(PENDING)
+  malwareDetections Int?
+  malwareCheckedAt  DateTime?
+
+  @@index([findingId])
+}
+
+model ComplianceCheck {
+  id           String              @id @default(uuid())
+  engagementId String
+  engagement   Engagement          @relation(fields: [engagementId], references: [id])
+  framework    ComplianceFramework
+  controlId    String
+  controlName  String
+  status       ComplianceStatus
+  notesEnc     Json? // EncryptedField
+  createdAt    DateTime            @default(now())
+
+  @@index([engagementId])
+}
+
+model Report {
+  id               String     @id @default(uuid())
+  engagementId     String
+  engagement       Engagement @relation(fields: [engagementId], references: [id])
+  type             ReportType
+  version          Int        @default(1)
+  storageKey       String // encrypted report file location
+  iv               String
+  authTag          String
+  encryptedDataKey String
+  kmsKeyId         String
+  keyVersion       Int
+  generatedAt      DateTime   @default(now())
+  generatedBy      String
+
+  @@index([engagementId])
+}
+
+model Retest {
+  id         String       @id @default(uuid())
+  findingId  String
+  finding    Finding      @relation(fields: [findingId], references: [id])
+  retestedBy String
+  retestedAt DateTime     @default(now())
+  result     RetestResult
+  notesEnc   Json? // EncryptedField
+
+  @@index([findingId])
+}
+
+model TrainingSession {
+  id            String          @id @default(uuid())
+  engagementId  String
+  engagement    Engagement      @relation(fields: [engagementId], references: [id])
+  topic         TrainingTopic
+  customTopic   String? // used when topic = CUSTOM
+  scheduledAt   DateTime
+  status        TrainingStatus  @default(SCHEDULED)
+  attendeeCount Int?
+  notesEnc      Json? // EncryptedField — materials links, session notes
+  createdAt     DateTime        @default(now())
+
+  @@index([engagementId])
+}
+
+// Metadata ledger only — never raw key material. Lets rotation and audit
+// track which CMK/version protects which record without ever holding a key.
+model KeyRef {
+  id           String     @id @default(uuid())
+  purpose      KeyPurpose
+  kmsKeyId     String
+  keyVersion   Int
+  resourceType String // e.g. "finding.descriptionEnc", "evidence"
+  resourceId   String
+  status       KeyStatus  @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  retiredAt    DateTime?
+
+  @@index([resourceType, resourceId])
+  @@index([status])
+}
+
+// Append-only by convention (no update/delete exposed via the API layer).
+model AuditLog {
+  id           String      @id @default(uuid())
+  userId       String?
+  user         User?       @relation(fields: [userId], references: [id])
+  action       AuditAction
+  resourceType String
+  resourceId   String?
+  engagementId String?
+  ipAddress    String?
+  userAgent    String?
+  result       AuditResult
+  timestamp    DateTime    @default(now())
+
+  @@index([userId])
+  @@index([resourceType, resourceId])
+  @@index([timestamp])
+}

@@ -1,0 +1,45 @@
+import { initSentry, captureException } from "./config/sentry";
+initSentry(); // before anything else that might throw
+
+import { createApp } from "./app";
+import { env } from "./config/env";
+import { logger } from "./config/logger";
+import { prisma } from "./db/prisma";
+
+// Last-resort net for rejections/exceptions outside the request lifecycle
+// (express-async-errors covers everything inside it). Log and keep serving —
+// a security-assessment API staying up through a transient error is better
+// than every client-facing request dying with it.
+process.on("unhandledRejection", (reason) => {
+  logger.error({ reason }, "Unhandled rejection");
+  captureException(reason);
+});
+process.on("uncaughtException", (err) => {
+  logger.error({ err }, "Uncaught exception");
+  captureException(err);
+});
+
+// A ScanJob's QUEUED/RUNNING state is only ever advanced by this same
+// process (src/modules/scanning/scan-runner.ts) — there's no separate
+// worker or queue. If the process dies or restarts mid-scan, that job would
+// otherwise sit RUNNING forever, which also permanently blocks re-scanning
+// that asset (scan.routes.ts refuses a second scan while one is "in
+// progress"). Sweep them at boot rather than adding a timeout-based check
+// to every read path.
+async function failOrphanedScanJobs(): Promise<void> {
+  const { count } = await prisma.scanJob.updateMany({
+    where: { status: { in: ["QUEUED", "RUNNING"] } },
+    data: { status: "FAILED", completedAt: new Date(), errorMessage: "Interrupted by a server restart" },
+  });
+  if (count > 0) logger.warn({ count }, "Marked orphaned scan job(s) as FAILED on startup");
+}
+
+const app = createApp();
+
+failOrphanedScanJobs()
+  .catch((err) => logger.error({ err }, "Failed to sweep orphaned scan jobs on startup"))
+  .finally(() => {
+    app.listen(env.port, () => {
+      logger.info(`Enforcer API listening on port ${env.port}`);
+    });
+  });

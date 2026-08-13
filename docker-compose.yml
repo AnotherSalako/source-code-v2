@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: enforcer
+      POSTGRES_PASSWORD: enforcer
+      POSTGRES_DB: enforcer
+    ports:
+      - "5432:5432"
+    volumes:
+      - enforcer_pgdata:/var/lib/postgresql/data
+
+volumes:
+  enforcer_pgdata:

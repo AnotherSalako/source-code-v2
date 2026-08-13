@@ -1,0 +1,62 @@
+@import "tailwindcss";
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,500&family=IBM+Plex+Mono:wght@400;500&display=swap");
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Monochrome ground: warm-neutral off-whites, near-black ink, one restrained
+     signal color reserved for severity/risk — never used decoratively. */
+  --color-paper: #f2f1ee;
+  --color-surface: #ffffff;
+  --color-surface-glass: rgb(255 255 255 / 0.6);
+  --color-ink: #171614;
+  --color-ink-soft: #4a4844;
+  --color-ink-faint: #8c8a84;
+  --color-line: rgb(23 22 20 / 0.08);
+  --color-line-soft: rgb(23 22 20 / 0.05);
+
+  --color-risk-critical: #b8402a;
+  --color-risk-high: #c97a3a;
+  --color-risk-medium: #b89a3a;
+  --color-risk-low: #6b8f6b;
+  --color-secure: #3f6f63;
+
+  --radius-card: 1.75rem;
+  --radius-pill: 999px;
+
+  --shadow-lift: 0 1px 2px rgb(23 22 20 / 0.04), 0 12px 32px -12px rgb(23 22 20 / 0.14);
+  --shadow-lift-lg: 0 2px 4px rgb(23 22 20 / 0.05), 0 24px 48px -16px rgb(23 22 20 / 0.18);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  border-color: var(--color-line);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-ink);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

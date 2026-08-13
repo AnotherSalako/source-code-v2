@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend (typecheck + test)
+    runs-on: ubuntu-latest
+    env:
+      # The test suite (tests/helpers/test-app.ts) mocks Prisma, Clerk, and
+      # object storage entirely — no real database or network calls happen —
+      # but src/config/env.ts validates these at module load regardless, so
+      # they need *some* value here even though nothing ever reads them for
+      # real. Never point CI at a live database.
+      DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"
+      KMS_PROVIDER: "local"
+      CMK_BASE64: "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE="
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Typecheck
+        run: npx tsc --noEmit -p tsconfig.json
+      - name: Test
+        run: npm test
+
+  frontend:
+    name: Frontend (typecheck + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      VITE_CLERK_PUBLISHABLE_KEY: "pk_test_ci-placeholder-key"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build

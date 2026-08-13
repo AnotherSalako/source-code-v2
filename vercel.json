@@ -1,0 +1,7 @@
+{
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
+  "crons": [
+    { "path": "/internal/rotate-keys", "schedule": "0 3 * * *" },
+    { "path": "/internal/scheduled-scans", "schedule": "0 4 * * *" }
+  ]
+}

@@ -53,6 +53,10 @@ vi.mock("../../src/modules/discovery/discovery-runner", () => ({
 vi.mock("../../src/modules/discovery/watch-runner", () => ({
   startWatchCycle: vi.fn().mockResolvedValue({ discoveryJobId: "discoveryjob_test" }),
 }));
+vi.mock("../../src/modules/cspm/cspm-scanner", () => ({
+  runCspmScan: vi.fn().mockResolvedValue([]),
+  verifyCredentials: vi.fn().mockResolvedValue({ valid: true }),
+}));
 vi.mock("../../src/modules/findings/import.service", () => ({
   importScanItems: vi.fn().mockResolvedValue({ createdIds: [], skipped: [] }),
 }));
@@ -122,6 +126,17 @@ export interface FakeClientRow {
   billingInfoEnc: unknown;
   createdAt: Date;
   kmsKeyId: string | null;
+}
+
+export interface FakeCloudCredentialRow {
+  id: string;
+  provider: string;
+  accessKeyIdEnc: unknown;
+  secretAccessKeyEnc: unknown;
+  region: string;
+  lastScannedAt: Date | null;
+  createdBy: string;
+  createdAt: Date;
 }
 
 export interface FakeEngagementRow {
@@ -376,6 +391,7 @@ export interface FakeAuditLogRow {
 
 const usersByEmail = new Map<string, FakeUserRow>();
 const clientsById = new Map<string, FakeClientRow>();
+const cloudCredentialsByClientId = new Map<string, FakeCloudCredentialRow>();
 const engagementsById = new Map<string, FakeEngagementRow>();
 const assetsById = new Map<string, FakeAssetRow>();
 const testsById = new Map<string, FakeTestRow>();
@@ -491,6 +507,35 @@ const prismaMock = {
         const ids = [...clientsById.keys()].filter((id) => matchWhereField(id, where?.id));
         for (const id of ids) clientsById.delete(id);
         return { count: ids.length };
+      }),
+    },
+    cloudCredential: {
+      findUnique: vi.fn(async ({ where }: any) => cloudCredentialsByClientId.get(where.clientId) ?? null),
+      upsert: vi.fn(async ({ where, create, update }: any) => {
+        const existing = cloudCredentialsByClientId.get(where.clientId);
+        if (existing) {
+          Object.assign(existing, update);
+          return existing;
+        }
+        const row: FakeCloudCredentialRow = {
+          id: nextId("cloudcredential"),
+          provider: "aws",
+          lastScannedAt: null,
+          createdAt: new Date(),
+          ...create,
+        };
+        cloudCredentialsByClientId.set(where.clientId, row);
+        return row;
+      }),
+      update: vi.fn(async ({ where, data }: any) => {
+        const row = cloudCredentialsByClientId.get(where.clientId)!;
+        Object.assign(row, data);
+        return row;
+      }),
+      delete: vi.fn(async ({ where }: any) => {
+        const row = cloudCredentialsByClientId.get(where.clientId)!;
+        cloudCredentialsByClientId.delete(where.clientId);
+        return row;
       }),
     },
     engagement: {
@@ -1097,6 +1142,22 @@ export function seedClient(row: Partial<FakeClientRow> & { id: string; name: str
   return full;
 }
 
+export function seedCloudCredential(clientId: string, row: Partial<FakeCloudCredentialRow> = {}): FakeCloudCredentialRow {
+  const full: FakeCloudCredentialRow = {
+    id: nextId("cloudcredential"),
+    provider: "aws",
+    accessKeyIdEnc: null,
+    secretAccessKeyEnc: null,
+    region: "us-east-1",
+    lastScannedAt: null,
+    createdBy: "user_admin",
+    createdAt: new Date(),
+    ...row,
+  };
+  cloudCredentialsByClientId.set(clientId, full);
+  return full;
+}
+
 export function seedEngagement(row: Partial<FakeEngagementRow> & { id: string; clientId: string }): FakeEngagementRow {
   const full: FakeEngagementRow = {
     status: "SCOPING",
@@ -1340,6 +1401,7 @@ export function seedDevice(
 export function resetFakeDb(): void {
   usersByEmail.clear();
   clientsById.clear();
+  cloudCredentialsByClientId.clear();
   engagementsById.clear();
   assetsById.clear();
   testsById.clear();

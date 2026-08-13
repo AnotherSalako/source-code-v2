@@ -977,6 +977,43 @@ returning nonsense) never loses the underlying candidates — only
 Computed on demand, like `/findings/clusters` — never persisted, so
 there's nothing to go stale or need invalidating as findings change.
 
+## CSPM-lite
+
+Cloud Security Posture Management, deliberately the "lite" version — three
+real, read-only checks against a client's AWS account
+(`src/modules/cspm/cspm-scanner.ts`), not a full multi-cloud posture
+platform: public S3 buckets, security-group ingress rules open to
+`0.0.0.0/0`/`::/0`, and customer-managed IAM policies granting
+`Action: *, Resource: *`. Every AWS call this makes is a `Describe`/`List`/
+`Get` — the IAM policy a client is asked to grant
+(`AmazonS3ReadOnlyAccess` + `AmazonEC2ReadOnlyAccess` + `IAMReadOnlyAccess`,
+not the broader AWS-managed `ReadOnlyAccess`) is exactly as much access as
+these three checks need and no more, same least-privilege discipline as
+the KMS key policy and the agent's Linux sudoers grant elsewhere in this
+app. Live-verified against a real AWS account: correctly found three real
+security-group rules open to the internet on specific, non-critical ports
+(rated `HIGH`, not `CRITICAL` — the severity logic correctly distinguished
+that from an all-ports-open or sensitive-port rule) and correctly found
+zero issues in the account's S3/IAM, matching what was actually there.
+
+**One credential per client, not per engagement** — `CloudCredential`
+(`clientId @unique`), because an AWS account is an org-wide thing to grant
+read access to, not something scoped to a single assessment.
+`PUT /clients/:id/cloud-credentials` makes one real read-only AWS call
+(`verifyCredentials`) *before* ever encrypting and storing anything — a
+credential that doesn't authenticate is rejected with AWS's own error
+message, not silently saved as an unusable string. Same write-only
+discipline as an enrollment token: `GET .../cloud-credentials` reports
+only `{ configured, region, lastScannedAt }`, never the secret, once it's
+stored.
+
+**Computed on demand, like `/findings/clusters` and `/attack-paths`.**
+`POST /clients/:id/cspm-scan` runs the three checks live and returns the
+issues directly — nothing is auto-created as a `Finding`. A `CspmIssue`
+doesn't fit `Finding`'s pentest-workflow shape (no `Test`, no CVSS, no
+retest lifecycle) any more than a `WatchAlert` does; a human reviewing the
+results decides what, if anything, becomes a tracked `Finding`.
+
 ## Scheduled scanning
 
 `GET /internal/scheduled-scans` sweeps every verified `WEB`/`API` asset on
@@ -1221,6 +1258,10 @@ POST   /engagements/:id/findings/query       ({ question }; AI-interpreted, whit
 GET    /engagements/:id/roadmap              (bucketed: quick_win/long_term/plan/uncategorized)
 GET    /engagements/:id/findings/clusters    (near-duplicate clusters + exploitability ranking — see "Finding clustering")
 GET    /engagements/:id/attack-paths         (structural co-occurrence + optional AI narrative — see "Attack-path reasoning")
+PUT    /clients/:id/cloud-credentials        (security_admin; verifies against AWS before storing — see "CSPM-lite")
+GET    /clients/:id/cloud-credentials        (security_admin; status only, never the secret)
+DELETE /clients/:id/cloud-credentials        (security_admin)
+POST   /clients/:id/cspm-scan                (security_admin; S3/EC2/IAM read-only checks, computed on demand)
 GET    /findings/:id
 PATCH  /findings/:id                         (security_admin; status and/or remediationEffort and/or acceptAiRemediationDraft)
 POST   /findings/:id/triage                  (security_admin; on-demand AI draft — see "AI-assisted triage")

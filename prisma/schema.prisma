@@ -241,6 +241,7 @@ model Client {
   // on) — assigning a key is not a forced re-encryption.
   kmsKeyId String?
 
+  cloudCredential  CloudCredential?
   users            User[]
   engagements      Engagement[]
   devices          Device[]
@@ -722,4 +723,27 @@ model Device {
 
   @@index([clientId])
   @@index([status])
+}
+
+// CSPM-lite (src/modules/cspm) — one AWS credential per client, not per
+// engagement: an AWS account is an org-wide thing to grant read access to,
+// not something scoped to a single assessment. Deliberately read-only in
+// scope — the IAM policy this key is expected to carry is documented in
+// cspm-scanner.ts, and nothing in this app ever asks AWS to change
+// anything, only to describe/list/get.
+model CloudCredential {
+  id                 String    @id @default(uuid())
+  clientId           String    @unique
+  client             Client    @relation(fields: [clientId], references: [id])
+  provider           String    @default("aws") // only "aws" exists in v1 — a real field, not a hardcoded assumption, so a second provider is additive later
+  accessKeyIdEnc     Json // EncryptedField — the access key ID isn't secret the way the secret key is, but it's still client infra detail, encrypted for the same reason Asset.identifierEnc is
+  secretAccessKeyEnc Json // EncryptedField
+  region             String
+  // Set only by a successful scan — credential *storage* already proves
+  // the keys authenticate (see cspm.routes.ts's PUT handler, which makes
+  // one real read-only call before ever saving anything), this is a
+  // "when did we last actually look" timestamp, not a validity check.
+  lastScannedAt DateTime?
+  createdBy     String // User.id
+  createdAt     DateTime  @default(now())
 }

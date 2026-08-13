@@ -33,6 +33,7 @@ import { internalRotationRouter } from "./modules/internal/rotation.routes";
 import { internalScheduledScansRouter } from "./modules/internal/scheduled-scans.routes";
 import { scanRouter } from "./modules/scanning/scan.routes";
 import { discoveryRouter } from "./modules/discovery/discovery.routes";
+import { agentsRouter } from "./modules/agents/agents.routes";
 
 export function createApp() {
   // @clerk/express reads these from process.env itself (that's the whole
@@ -89,6 +90,7 @@ export function createApp() {
   app.use(trainingRouter);
   app.use(scanRouter);
   app.use(discoveryRouter);
+  app.use(agentsRouter);
   app.use(internalRotationRouter);
   app.use(internalScheduledScansRouter);
   app.use("/audit-logs", auditRouter);

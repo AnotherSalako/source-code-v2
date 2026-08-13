@@ -241,8 +241,10 @@ model Client {
   // on) — assigning a key is not a forced re-encryption.
   kmsKeyId String?
 
-  users       User[]
-  engagements Engagement[]
+  users            User[]
+  engagements      Engagement[]
+  devices          Device[]
+  enrollmentTokens EnrollmentToken[]
 }
 
 model Engagement {
@@ -589,4 +591,75 @@ model AuditLog {
   @@index([userId])
   @@index([resourceType, resourceId])
   @@index([timestamp])
+}
+
+// --- Endpoint agent enrollment (src/modules/agents) -------------------------
+// Devices are a persistent, engagement-independent presence — scoped to a
+// Client directly, not to any one time-boxed Engagement (an agent installed
+// today should keep reporting for as long as the relationship lasts, not
+// get orphaned when whichever engagement happened to be active at install
+// time closes). No X.509/TLS machinery anywhere here — nothing in this
+// design does certificate-chain validation, so a real cert would just be
+// unused attack surface. Ed25519 throughout instead: a small CA-signed
+// credential recorded at enrollment (mostly for audit — the server verifies
+// day-to-day requests against the device's own stored public key, not by
+// re-checking the credential signature every time), and revocation is a
+// boolean flag checked on every request, not a rotation scheme.
+
+enum DeviceStatus {
+  ACTIVE
+  REVOKED
+}
+
+// Singleton row (there is exactly one, id fixed to "default") holding the
+// app's own CA keypair — same KMS-wrapped custody pattern as every other
+// key in this app (see src/crypto/envelope.ts): the private key seed is
+// never persisted in plaintext, only ever decrypted in-memory for the
+// instant it's needed to sign a device's enrollment credential.
+model AgentCaKey {
+  id                String   @id @default("default")
+  publicKeyBase64   String // safe to expose — agents and this app both need it to verify signatures
+  privateSeedEnc    Json // EncryptedField — 32-byte Ed25519 seed, system-key-wrapped (this is an app-global key, not a client's)
+  createdAt         DateTime @default(now())
+}
+
+// A short-lived, single-use bearer credential a SECURITY_ADMIN generates in
+// the dashboard and hands to whoever is installing the agent on a target
+// machine. Stored only as a hash — the plaintext token is returned exactly
+// once, at generation time, and never recoverable again. Redemption
+// (POST /internal/agents/enroll) consumes it atomically: the same
+// transaction that flips usedAt also creates the Device row, so a retried
+// or raced request can never enroll two devices from one token.
+model EnrollmentToken {
+  id              String    @id @default(uuid())
+  clientId        String
+  client          Client    @relation(fields: [clientId], references: [id])
+  tokenHash       String    @unique // sha256(token) — the plaintext token is never stored anywhere
+  createdBy       String // User.id of the admin who generated it
+  expiresAt       DateTime
+  usedAt          DateTime?
+  usedByDeviceId  String? // set once redeemed — traceability, not a relation (mirrors the plain-string-FK convention used elsewhere, e.g. ScanJob.triggeredById)
+  createdAt       DateTime  @default(now())
+
+  @@index([clientId])
+  @@index([tokenHash])
+}
+
+model Device {
+  id              String       @id @default(uuid())
+  clientId        String
+  client          Client       @relation(fields: [clientId], references: [id])
+  name            String // hostname reported at enrollment
+  platform        String // "windows" | "macos" | "linux"
+  publicKeyBase64 String // the device's own Ed25519 public key — every subsequent request is verified against this, not against the CA-signed credential
+  credentialSig   String // base64 Ed25519 signature the CA produced at enrollment — kept for audit/display, not re-verified per request
+  status          DeviceStatus @default(ACTIVE)
+  enrolledAt      DateTime     @default(now())
+  lastCheckInAt   DateTime?
+  osVersion       String?
+  revokedAt       DateTime?
+  revokedBy       String? // User.id
+
+  @@index([clientId])
+  @@index([status])
 }

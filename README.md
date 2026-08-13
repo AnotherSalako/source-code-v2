@@ -239,6 +239,52 @@ point forward); and rotating a *tenant's own* key to a new version isn't
 implemented (`rotateFieldKey` currently just skips non-system-key records
 rather than rotating them in place).
 
+## Endpoint agent enrollment
+
+A separate deployable artifact — `agent/`, a Rust CLI, not part of this
+Node app — that lets a client's own machines enroll against their org and
+prove a persistent, cryptographic identity to Jupiter. **v1 is enrollment
+only**: no inventory collection, no remote command execution, no
+OS-service installation yet. See `agent/README.md` for the full scope
+boundary and what's deliberately deferred.
+
+Same non-cert design as everything else that needed one built from scratch
+here: no X.509/TLS chain validation anywhere, so a real certificate would
+be attack surface with nothing checking it. Ed25519 throughout instead —
+`src/modules/agents/ca.ts` holds this app's one CA keypair (KMS-wrapped,
+same custody rule as every other key in this app: decrypted fresh per
+signature, never cached, never logged), and `device-auth.middleware.ts`
+authenticates every agent request by re-verifying a fresh signature against
+the device's own stored public key — not by re-checking the CA-issued
+credential, which exists mainly for audit/display.
+
+**The flow:** a `SECURITY_ADMIN` calls `POST
+/clients/:id/devices/enrollment-tokens` and gets a single-use, 30-minute
+token back — returned exactly once, stored server-side only as a SHA-256
+hash. The agent redeems it via `POST /internal/agents/enroll`, generating
+its Ed25519 keypair *locally* (the private key is never transmitted,
+server-side compromise can't expose it) and sending only the public key.
+Redemption is check-and-consume inside one transaction, so two racing
+redemptions of a leaked token can't both succeed. Revocation is a `status`
+flag on the `Device` row, checked on literally every subsequent request —
+deliberately not cert-expiry-shaped, since v1 has no cert rotation at all.
+
+**Transport:** Jupiter's backend is pure Vercel serverless (confirmed via
+`vercel.json` — no persistent process to terminate real client-cert mTLS),
+so agent↔server auth is application-layer: standard server-authenticated
+TLS, plus every request signed by the device's own key
+(`X-Jupiter-Device-Id` / `X-Jupiter-Timestamp` / `X-Jupiter-Signature`
+headers, a 5-minute replay window). Deploys on the same infrastructure
+everything else already does, no persistent host required — that's the
+tradeoff against real mTLS, made deliberately, not by default.
+
+See `prisma/schema.prisma`'s "Endpoint agent enrollment" section for the
+`AgentCaKey` / `EnrollmentToken` / `Device` model reasoning, and
+`tests/routes/agents.test.ts` for the enrollment race-safety, expiry,
+revocation, and signature-forgery tests this is built against (device
+signature verification is tested against a signature a real, compiled Rust
+binary produced — see `agent/README.md`'s "Building" section for how).
+
 ## RBAC
 
 Three roles (`prisma/schema.prisma` `Role` enum):
@@ -961,6 +1007,11 @@ GET    /clients                              (security_admin: all; client roles:
 GET    /clients/:id
 GET    /clients/:id/findings-history         (aggregated across every engagement for the client)
 PATCH  /clients/:id/kms-key                  (security_admin; assigns a dedicated per-tenant key — see "Per-tenant encryption keys")
+POST   /clients/:id/devices/enrollment-tokens (security_admin; single-use, 30-min TTL — see "Endpoint agent enrollment")
+GET    /clients/:id/devices                  (metadata only — no key material ever returned)
+PATCH  /devices/:id/revoke                   (security_admin)
+POST   /internal/agents/enroll               (token-authenticated, not a logged-in user — redeems an enrollment token)
+GET    /internal/agents/whoami               (device-signature-authenticated — the agent's own self-test)
 POST   /engagements                          (security_admin)
 GET    /engagements                          (?clientId= optional filter)
 GET    /engagements/:id

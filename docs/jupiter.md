@@ -77,6 +77,25 @@ trigger them the way AI-assisted triage does. Same "never a bare number
 with no justification" discipline as the AI triage rationale, just without
 a model in the loop.
 
+**Endpoint agent enrollment** (`agent/`, see README "Endpoint agent
+enrollment") is the first Jupiter component that isn't this Node app at
+all — a separate Rust CLI, distributed to a client's own machines. Scoped
+deliberately narrow: v1 is enrollment only, no inventory collection yet, no
+remote command execution ever without a fresh design pass, no OS-service
+installation until that's explicitly confirmed (registering a background
+service needs admin/root on every platform — flagged, not quietly
+assumed). The interesting design constraint was Jupiter's own hosting: pure
+Vercel serverless means no persistent process terminates TLS, so real
+client-certificate mTLS wasn't available — application-layer request
+signing with the device's own Ed25519 key does the same job without
+needing new infrastructure. Same story as everywhere else a new key was
+introduced: no X.509 anywhere (nothing validates a cert chain, so a real
+one would be pure attack surface), the CA key gets the identical
+KMS-wrapped custody treatment every other key in this app gets, and
+revocation is a boolean flag checked on every request rather than a
+rotation scheme — deliberately the simplest mechanism that's actually
+sufficient for what v1 needs.
+
 Everything else on the original add-in list is still worth building — see
 "The actual gap in 'blueprint' as a business model" below, which applies to
 feature scope as much as it applies to deployment tooling.

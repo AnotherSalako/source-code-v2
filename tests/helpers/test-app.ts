@@ -309,6 +309,39 @@ export interface FakeKeyRefRow {
   retiredAt: Date | null;
 }
 
+export interface FakeEnrollmentTokenRow {
+  id: string;
+  clientId: string;
+  tokenHash: string;
+  createdBy: string;
+  expiresAt: Date;
+  usedAt: Date | null;
+  usedByDeviceId: string | null;
+  createdAt: Date;
+}
+
+export interface FakeDeviceRow {
+  id: string;
+  clientId: string;
+  name: string;
+  platform: string;
+  publicKeyBase64: string;
+  credentialSig: string;
+  status: string;
+  enrolledAt: Date;
+  lastCheckInAt: Date | null;
+  osVersion: string | null;
+  revokedAt: Date | null;
+  revokedBy: string | null;
+}
+
+export interface FakeAgentCaKeyRow {
+  id: string;
+  publicKeyBase64: string;
+  privateSeedEnc: unknown;
+  createdAt: Date;
+}
+
 export interface FakeAuditLogRow {
   id: string;
   userId: string | null;
@@ -335,6 +368,9 @@ const scanJobsById = new Map<string, FakeScanJobRow>();
 const discoveryJobsById = new Map<string, FakeDiscoveryJobRow>();
 const discoveredAssetsById = new Map<string, FakeDiscoveredAssetRow>();
 const keyRefsById = new Map<string, FakeKeyRefRow>();
+const enrollmentTokensById = new Map<string, FakeEnrollmentTokenRow>();
+const devicesById = new Map<string, FakeDeviceRow>();
+const agentCaKeyById = new Map<string, FakeAgentCaKeyRow>();
 const auditLogs: FakeAuditLogRow[] = [];
 
 // Real UUIDs, not human-readable "prefix_N" strings — several Zod schemas
@@ -877,6 +913,59 @@ const prismaMock = {
         return { count: rows.length };
       }),
     },
+    enrollmentToken: {
+      create: vi.fn(async ({ data }: any) => {
+        const row: FakeEnrollmentTokenRow = { id: nextId("enrollmenttoken"), usedAt: null, usedByDeviceId: null, createdAt: new Date(), ...data };
+        enrollmentTokensById.set(row.id, row);
+        return row;
+      }),
+      findUnique: vi.fn(async ({ where }: any) => {
+        if (where.tokenHash) return [...enrollmentTokensById.values()].find((t) => t.tokenHash === where.tokenHash) ?? null;
+        if (where.id) return enrollmentTokensById.get(where.id) ?? null;
+        return null;
+      }),
+      update: vi.fn(async ({ where, data }: any) => {
+        const row = enrollmentTokensById.get(where.id)!;
+        Object.assign(row, data);
+        return row;
+      }),
+    },
+    device: {
+      create: vi.fn(async ({ data }: any) => {
+        const row: FakeDeviceRow = {
+          id: nextId("device"),
+          status: "ACTIVE",
+          enrolledAt: new Date(),
+          lastCheckInAt: null,
+          osVersion: null,
+          revokedAt: null,
+          revokedBy: null,
+          ...data,
+        };
+        devicesById.set(row.id, row);
+        return row;
+      }),
+      findUnique: vi.fn(async ({ where }: any) => devicesById.get(where.id) ?? null),
+      findMany: vi.fn(async ({ where }: any) => [...devicesById.values()].filter((d) => matchWhereField(d.clientId, where?.clientId))),
+      update: vi.fn(async ({ where, data }: any) => {
+        const row = devicesById.get(where.id)!;
+        Object.assign(row, data);
+        return row;
+      }),
+    },
+    agentCaKey: {
+      findUnique: vi.fn(async ({ where }: any) => agentCaKeyById.get(where.id) ?? null),
+      findUniqueOrThrow: vi.fn(async ({ where }: any) => {
+        const row = agentCaKeyById.get(where.id);
+        if (!row) throw new Error("not found");
+        return row;
+      }),
+      create: vi.fn(async ({ data }: any) => {
+        const row: FakeAgentCaKeyRow = { createdAt: new Date(), ...data };
+        agentCaKeyById.set(row.id, row);
+        return row;
+      }),
+    },
     auditLog: {
       create: vi.fn(async ({ data }: any) => {
         const row: FakeAuditLogRow = { id: nextId("audit"), engagementId: null, timestamp: new Date(), ...data };
@@ -1119,6 +1208,32 @@ export function seedDiscoveredAsset(
 }
 
 /** Wipes all fake data between tests so one test's seed data can't leak into another. */
+export function seedEnrollmentToken(
+  row: Partial<FakeEnrollmentTokenRow> & { id: string; clientId: string; tokenHash: string; createdBy: string; expiresAt: Date }
+): FakeEnrollmentTokenRow {
+  const full: FakeEnrollmentTokenRow = { usedAt: null, usedByDeviceId: null, createdAt: new Date(), ...row };
+  enrollmentTokensById.set(full.id, full);
+  return full;
+}
+
+export function seedDevice(
+  row: Partial<FakeDeviceRow> & { id: string; clientId: string; name: string; publicKeyBase64: string }
+): FakeDeviceRow {
+  const full: FakeDeviceRow = {
+    platform: "linux",
+    credentialSig: "test-sig",
+    status: "ACTIVE",
+    enrolledAt: new Date(),
+    lastCheckInAt: null,
+    osVersion: null,
+    revokedAt: null,
+    revokedBy: null,
+    ...row,
+  };
+  devicesById.set(full.id, full);
+  return full;
+}
+
 export function resetFakeDb(): void {
   usersByEmail.clear();
   clientsById.clear();
@@ -1135,6 +1250,9 @@ export function resetFakeDb(): void {
   discoveryJobsById.clear();
   discoveredAssetsById.clear();
   keyRefsById.clear();
+  enrollmentTokensById.clear();
+  devicesById.clear();
+  agentCaKeyById.clear();
   auditLogs.length = 0;
 }
 

@@ -1,6 +1,6 @@
 import request from "supertest";
 import { describe, it, expect, beforeEach } from "vitest";
-import { seedUser, seedClient, seedEngagement, seedComplianceCheck, resetFakeDb } from "../helpers/test-app";
+import { seedUser, seedClient, seedEngagement, seedComplianceCheck, seedAsset, seedTest, seedFinding, resetFakeDb } from "../helpers/test-app";
 
 const { createApp } = await import("../../src/app");
 const app = createApp();
@@ -96,5 +96,49 @@ describe("GET /engagements/:id/compliance-summary", () => {
     expect(res.body.totalControls).toBe(2);
     expect(res.body.byFramework.ISO27001.PASS).toBe(1);
     expect(res.body.byFramework.ISO27001.FAIL).toBe(1);
+  });
+});
+
+describe("GET /engagements/:id/compliance-mapping", () => {
+  const ASSET_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+
+  it("404s for a different org's engagement", async () => {
+    seedUser({ email: "tech@acme.com", name: "Tech", role: "TECHNICAL_CLIENT", orgId: CLIENT_A });
+    await request(app).get("/engagements/eng-b/compliance-mapping").set("x-test-user", "tech@acme.com").expect(404);
+  });
+
+  it("maps an actionable finding's title to relevant controls", async () => {
+    seedAsset({ id: ASSET_ID, engagementId: "eng-a", type: "WEB", name: "Site" });
+    seedTest({ id: "test-a", engagementId: "eng-a", assetId: ASSET_ID, type: "VULN_SCAN", testerId: "user_admin" });
+    seedFinding({ id: "f1", testId: "test-a", assetId: ASSET_ID, title: "SQL injection in login form", severity: "CRITICAL", status: "OPEN" });
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+
+    const res = await request(app).get("/engagements/eng-a/compliance-mapping").set("x-test-user", "admin@example.com").expect(200);
+
+    expect(res.body.findings).toHaveLength(1);
+    expect(res.body.findings[0].findingId).toBe("f1");
+    expect(res.body.findings[0].mappedControls).toContainEqual({ framework: "ISO27001", controlId: "A.8.28", controlName: "Secure coding" });
+  });
+
+  it("includes a finding with an empty mappedControls array rather than omitting it", async () => {
+    seedAsset({ id: ASSET_ID, engagementId: "eng-a", type: "WEB", name: "Site" });
+    seedTest({ id: "test-a", engagementId: "eng-a", assetId: ASSET_ID, type: "VULN_SCAN", testerId: "user_admin" });
+    seedFinding({ id: "f1", testId: "test-a", assetId: ASSET_ID, title: "Server responds slowly under load", severity: "LOW", status: "OPEN" });
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+
+    const res = await request(app).get("/engagements/eng-a/compliance-mapping").set("x-test-user", "admin@example.com").expect(200);
+
+    expect(res.body.findings).toHaveLength(1);
+    expect(res.body.findings[0].mappedControls).toEqual([]);
+  });
+
+  it("excludes RETESTED_PASS and ACCEPTED_RISK findings — nothing still-actionable to map", async () => {
+    seedAsset({ id: ASSET_ID, engagementId: "eng-a", type: "WEB", name: "Site" });
+    seedTest({ id: "test-a", engagementId: "eng-a", assetId: ASSET_ID, type: "VULN_SCAN", testerId: "user_admin" });
+    seedFinding({ id: "fixed", testId: "test-a", assetId: ASSET_ID, title: "SQL injection", severity: "CRITICAL", status: "RETESTED_PASS" });
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+
+    const res = await request(app).get("/engagements/eng-a/compliance-mapping").set("x-test-user", "admin@example.com").expect(200);
+    expect(res.body.findings).toEqual([]);
   });
 });

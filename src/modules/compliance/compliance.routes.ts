@@ -9,6 +9,7 @@ import { requireAuth } from "../../middleware/auth";
 import { requireRole, assertOwnOrg } from "../../middleware/rbac";
 import { writeAuditLog } from "../audit/audit.service";
 import { CONTROL_LIBRARY } from "./control-library";
+import { mapFindingToControls } from "./finding-mapper";
 
 export const complianceRouter = Router({ mergeParams: true });
 
@@ -216,4 +217,35 @@ complianceRouter.get("/engagements/:engagementId/compliance-summary", requireAut
   }, {});
 
   res.json({ totalControls: checks.length, byFramework: summary });
+});
+
+// Deterministic, keyword-based — see finding-mapper.ts's own comment for
+// why this stays a suggestion, never an auto-assessment. Scoped to
+// findings still worth acting on (OPEN/REMEDIATING/RETESTED_FAIL), same
+// set /findings/clusters and the remediation roadmap use. A finding with
+// no keyword match is included with an empty mappedControls array rather
+// than omitted — "nothing mapped" is itself useful information, not a
+// reason to hide the finding from this view.
+complianceRouter.get("/engagements/:engagementId/compliance-mapping", requireAuth, async (req, res) => {
+  const { engagementId } = req.params;
+  const engagement = await prisma.engagement.findUnique({ where: { id: engagementId }, select: { clientId: true } });
+  if (!engagement || !assertOwnOrg(req, engagement.clientId)) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+
+  const findings = await prisma.finding.findMany({
+    where: { test: { engagementId }, status: { in: ["OPEN", "REMEDIATING", "RETESTED_FAIL"] } },
+    select: { id: true, title: true, severity: true, assetId: true },
+  });
+
+  const mapped = findings.map((f) => ({
+    findingId: f.id,
+    findingTitle: f.title,
+    severity: f.severity,
+    assetId: f.assetId,
+    mappedControls: mapFindingToControls(f.title),
+  }));
+
+  res.json({ findings: mapped });
 });

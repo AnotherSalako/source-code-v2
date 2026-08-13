@@ -519,6 +519,20 @@ The Compliance tab has a "gaps only" filter (FAIL/PARTIAL) once controls are
 assessed, and status is editable inline per control (`PATCH
 /compliance-checks/:id`).
 
+**Finding → control mapping.** `GET /engagements/:id/compliance-mapping`
+(`src/modules/compliance/finding-mapper.ts`) suggests which controls each
+actionable finding is plausible evidence against — deterministic,
+keyword-based (a title mentioning "SQL injection" maps to ISO27001 A.8.28
+Secure coding; "weak TLS cipher" maps to A.8.24 Use of cryptography, and so
+on across ~10 rules spanning both frameworks), never authoritative. It
+never writes to a `ComplianceCheck`'s status itself — the seeded control
+library and this mapping are two separate reads a consultant cross-
+references by hand, not one auto-assessing the other. Deliberately willing
+to map a finding to nothing rather than force a bad fit: a finding with no
+keyword match still appears in the response with an empty
+`mappedControls` array, since "this finding doesn't map cleanly to a
+control" is itself useful information, not a reason to hide it.
+
 ## Staff training
 
 `TrainingSession` rows (topic, scheduled date, status, attendee count,
@@ -1322,6 +1336,7 @@ POST   /engagements/:id/compliance-checks/seed (security_admin; { framework: "IS
 GET    /engagements/:id/compliance-checks
 PATCH  /compliance-checks/:id                (security_admin)
 GET    /engagements/:id/compliance-summary
+GET    /engagements/:id/compliance-mapping   (deterministic finding -> control suggestions, see "Compliance control library")
 POST   /engagements/:id/training-sessions    (security_admin)
 GET    /engagements/:id/training-sessions
 GET    /training-sessions/:id

@@ -18,19 +18,24 @@ import { scanPorts } from "./nmap";
 // become scannable Assets on their own — they land as DiscoveredAsset rows
 // a human reviews and promotes (see discovery.routes.ts).
 const CT_LOOKUP_TIMEOUT_MS = 15_000;
-const MAX_RUNTIME_MS = 3 * 60 * 1000;
-const MAX_CANDIDATES = 50; // crt.sh can return thousands of historical certs for a big domain; cap what one run processes
-const COMMON_PORTS = [21, 22, 25, 80, 443, 3389, 8080, 8443];
+export const MAX_RUNTIME_MS = 3 * 60 * 1000;
+export const MAX_CANDIDATES = 50; // crt.sh can return thousands of historical certs for a big domain; cap what one run processes
+export const COMMON_PORTS = [21, 22, 25, 80, 443, 3389, 8080, 8443];
 
 function stripWildcard(host: string): string {
   return host.replace(/^\*\./, "").trim().toLowerCase();
 }
 
-function bareHostname(identifier: string): string {
+export function bareHostname(identifier: string): string {
   return identifier.includes("://") ? new URL(identifier).hostname : identifier.split("/")[0];
 }
 
-async function queryCertTransparency(domain: string): Promise<string[]> {
+// Exported for watch-runner.ts, which reuses this exact subdomain-hunting
+// step rather than duplicating it — the only difference in watch mode is
+// what happens to an *already-known* hostname (diff-and-alert instead of
+// silently skipping it), not how new candidates get found in the first
+// place.
+export async function queryCertTransparency(domain: string): Promise<string[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CT_LOOKUP_TIMEOUT_MS);
   try {
@@ -54,7 +59,7 @@ async function queryCertTransparency(domain: string): Promise<string[]> {
 }
 
 /** Returns the resolved address, or null if the hostname no longer resolves — stale CT entries are dropped, not reported. */
-async function resolveLive(hostname: string): Promise<string | null> {
+export async function resolveLive(hostname: string): Promise<string | null> {
   try {
     const { address } = await dns.lookup(hostname);
     return address;

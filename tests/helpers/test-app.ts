@@ -50,6 +50,9 @@ vi.mock("../../src/modules/scanning/scan-runner", () => ({
 vi.mock("../../src/modules/discovery/discovery-runner", () => ({
   startDiscovery: vi.fn().mockResolvedValue({ discoveryJobId: "discoveryjob_test" }),
 }));
+vi.mock("../../src/modules/discovery/watch-runner", () => ({
+  startWatchCycle: vi.fn().mockResolvedValue({ discoveryJobId: "discoveryjob_test" }),
+}));
 vi.mock("../../src/modules/findings/import.service", () => ({
   importScanItems: vi.fn().mockResolvedValue({ createdIds: [], skipped: [] }),
 }));
@@ -296,6 +299,20 @@ export interface FakeDiscoveredAssetRow {
   reviewedBy: string | null;
   reviewedAt: Date | null;
   createdAt: Date;
+  lastScannedAt: Date | null;
+}
+
+export interface FakeWatchAlertRow {
+  id: string;
+  engagementId: string;
+  discoveredAssetId: string | null;
+  discoveryJobId: string;
+  kind: string;
+  summary: string;
+  details: unknown;
+  acknowledgedAt: Date | null;
+  acknowledgedBy: string | null;
+  createdAt: Date;
 }
 
 export interface FakeKeyRefRow {
@@ -369,6 +386,7 @@ const trainingSessionsById = new Map<string, FakeTrainingSessionRow>();
 const scanJobsById = new Map<string, FakeScanJobRow>();
 const discoveryJobsById = new Map<string, FakeDiscoveryJobRow>();
 const discoveredAssetsById = new Map<string, FakeDiscoveredAssetRow>();
+const watchAlertsById = new Map<string, FakeWatchAlertRow>();
 const keyRefsById = new Map<string, FakeKeyRefRow>();
 const enrollmentTokensById = new Map<string, FakeEnrollmentTokenRow>();
 const devicesById = new Map<string, FakeDeviceRow>();
@@ -389,6 +407,7 @@ const nextId = (_prefix: string) => crypto.randomUUID();
 function matchWhereField(value: unknown, cond: unknown): boolean {
   if (cond === undefined) return true;
   if (cond && typeof cond === "object" && "in" in (cond as any)) return (cond as { in: unknown[] }).in.includes(value);
+  if (cond && typeof cond === "object" && "not" in (cond as any)) return value !== (cond as { not: unknown }).not;
   return value === cond;
 }
 
@@ -870,6 +889,7 @@ const prismaMock = {
         let all = [...discoveredAssetsById.values()];
         if (where?.engagementId) all = all.filter((d) => matchWhereField(d.engagementId, where.engagementId));
         if (where?.parentAssetId) all = all.filter((d) => matchWhereField(d.parentAssetId, where.parentAssetId));
+        if (where?.status) all = all.filter((d) => matchWhereField(d.status, where.status));
         return all;
       }),
       create: vi.fn(async ({ data }: any) => {
@@ -882,6 +902,7 @@ const prismaMock = {
           reviewedBy: null,
           reviewedAt: null,
           createdAt: new Date(),
+          lastScannedAt: null,
           ...data,
         };
         discoveredAssetsById.set(row.id, row);
@@ -895,6 +916,50 @@ const prismaMock = {
       deleteMany: vi.fn(async ({ where }: any) => {
         const rows = [...discoveredAssetsById.values()].filter((d) => matchWhereField(d.engagementId, where?.engagementId));
         for (const d of rows) discoveredAssetsById.delete(d.id);
+        return { count: rows.length };
+      }),
+    },
+    watchAlert: {
+      findUnique: vi.fn(async ({ where, include }: any) => {
+        const row = watchAlertsById.get(where.id);
+        if (!row) return null;
+        if (include?.engagement) return { ...row, engagement: { clientId: engagementsById.get(row.engagementId)?.clientId } };
+        return row;
+      }),
+      findMany: vi.fn(async ({ where, include }: any) => {
+        let all = [...watchAlertsById.values()];
+        if (where?.engagementId) all = all.filter((a) => matchWhereField(a.engagementId, where.engagementId));
+        all = [...all].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+        if (include?.discoveredAsset) {
+          return all.map((row) => ({
+            ...row,
+            discoveredAsset: row.discoveredAssetId
+              ? { valueEnc: discoveredAssetsById.get(row.discoveredAssetId)?.valueEnc }
+              : null,
+          }));
+        }
+        return all;
+      }),
+      create: vi.fn(async ({ data }: any) => {
+        const row: FakeWatchAlertRow = {
+          id: nextId("watchalert"),
+          discoveredAssetId: null,
+          acknowledgedAt: null,
+          acknowledgedBy: null,
+          createdAt: new Date(),
+          ...data,
+        };
+        watchAlertsById.set(row.id, row);
+        return row;
+      }),
+      update: vi.fn(async ({ where, data }: any) => {
+        const row = watchAlertsById.get(where.id)!;
+        Object.assign(row, data);
+        return row;
+      }),
+      deleteMany: vi.fn(async ({ where }: any) => {
+        const rows = [...watchAlertsById.values()].filter((a) => matchWhereField(a.engagementId, where?.engagementId));
+        for (const a of rows) watchAlertsById.delete(a.id);
         return { count: rows.length };
       }),
     },
@@ -1206,9 +1271,25 @@ export function seedDiscoveredAsset(
     reviewedBy: null,
     reviewedAt: null,
     createdAt: new Date(),
+    lastScannedAt: null,
     ...row,
   };
   discoveredAssetsById.set(full.id, full);
+  return full;
+}
+
+export function seedWatchAlert(
+  row: Partial<FakeWatchAlertRow> & { id: string; engagementId: string; discoveryJobId: string; kind: string; summary: string }
+): FakeWatchAlertRow {
+  const full: FakeWatchAlertRow = {
+    discoveredAssetId: null,
+    details: null,
+    acknowledgedAt: null,
+    acknowledgedBy: null,
+    createdAt: new Date(),
+    ...row,
+  };
+  watchAlertsById.set(full.id, full);
   return full;
 }
 
@@ -1255,6 +1336,7 @@ export function resetFakeDb(): void {
   scanJobsById.clear();
   discoveryJobsById.clear();
   discoveredAssetsById.clear();
+  watchAlertsById.clear();
   keyRefsById.clear();
   enrollmentTokensById.clear();
   devicesById.clear();

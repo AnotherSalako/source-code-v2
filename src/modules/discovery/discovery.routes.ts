@@ -141,6 +141,66 @@ discoveryRouter.get("/engagements/:engagementId/discovered-assets", requireAuth,
   res.json(decorated);
 });
 
+// Watch mode's detected changes (src/modules/discovery/watch-runner.ts) —
+// listed separately from /discovered-assets rather than folded into that
+// response, since an alert is a point-in-time event ("this port opened on
+// this date") not a current-state row the way a DiscoveredAsset is; a
+// hostname can have many alerts over time but is still exactly one
+// DiscoveredAsset row.
+discoveryRouter.get("/engagements/:engagementId/watch-alerts", requireAuth, async (req, res) => {
+  const { engagementId } = req.params;
+  const engagement = await prisma.engagement.findUnique({ where: { id: engagementId }, select: { clientId: true } });
+  if (!engagement || !assertOwnOrg(req, engagement.clientId)) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+
+  const rows = await prisma.watchAlert.findMany({
+    where: { engagementId },
+    orderBy: { createdAt: "desc" },
+    include: { discoveredAsset: { select: { valueEnc: true } } },
+  });
+
+  const decorated = await Promise.all(
+    rows.map(async (row) => ({
+      id: row.id,
+      discoveredAssetId: row.discoveredAssetId,
+      // The hostname lives only on DiscoveredAsset.valueEnc — decrypted
+      // here at read time and joined in, never duplicated into WatchAlert
+      // itself (see the model's comment in schema.prisma for why).
+      hostname: row.discoveredAsset ? await decryptField(kms, row.discoveredAsset.valueEnc as any, `discoveredAsset:value`) : null,
+      discoveryJobId: row.discoveryJobId,
+      kind: row.kind,
+      summary: row.summary,
+      details: row.details,
+      acknowledgedAt: row.acknowledgedAt,
+      acknowledgedBy: row.acknowledgedBy,
+      createdAt: row.createdAt,
+    }))
+  );
+
+  res.json(decorated);
+});
+
+discoveryRouter.post("/watch-alerts/:id/acknowledge", requireAuth, async (req, res) => {
+  const row = await prisma.watchAlert.findUnique({ where: { id: req.params.id }, include: { engagement: true } });
+  if (!row || !assertOwnOrg(req, row.engagement.clientId)) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  if (row.acknowledgedAt) {
+    res.status(400).json({ error: "Already acknowledged" });
+    return;
+  }
+
+  await prisma.watchAlert.update({
+    where: { id: row.id },
+    data: { acknowledgedAt: new Date(), acknowledgedBy: req.user!.id },
+  });
+
+  res.json({ acknowledged: true });
+});
+
 async function loadOwnedDiscoveredAsset(req: import("express").Request, id: string) {
   const row = await prisma.discoveredAsset.findUnique({ where: { id }, include: { engagement: true } });
   if (!row || !assertOwnOrg(req, row.engagement.clientId)) return null;

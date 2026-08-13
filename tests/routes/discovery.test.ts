@@ -7,6 +7,7 @@ import {
   seedAsset,
   seedDiscoveryJob,
   seedDiscoveredAsset,
+  seedWatchAlert,
   resetFakeDb,
 } from "../helpers/test-app";
 
@@ -151,5 +152,110 @@ describe("POST /discovered-assets/:id/promote and /ignore", () => {
     });
     seedUser({ email: "tech@acme.com", name: "Tech", role: "TECHNICAL_CLIENT", orgId: CLIENT_A });
     await request(app).post("/discovered-assets/disc-k/promote").set("x-test-user", "tech@acme.com").expect(403);
+  });
+});
+
+describe("GET /engagements/:id/watch-alerts", () => {
+  it("lists alerts newest-first with the hostname decrypted and joined in from DiscoveredAsset", async () => {
+    seedAsset({ id: "asset-l", engagementId: "eng-a", type: "WEB", name: "Root", verificationStatus: "VERIFIED" });
+    seedDiscoveryJob({ id: "job-l", engagementId: "eng-a", assetId: "asset-l", tool: "watch", status: "COMPLETE" });
+    seedDiscoveredAsset({
+      id: "disc-l",
+      engagementId: "eng-a",
+      parentAssetId: "asset-l",
+      discoveryJobId: "job-l",
+      valueEnc: (await encryptField(kms, "sub.acme.example", "discoveredAsset:value")) as any,
+    });
+    seedWatchAlert({
+      id: "alert-older",
+      engagementId: "eng-a",
+      discoveryJobId: "job-l",
+      discoveredAssetId: "disc-l",
+      kind: "PORT_OPENED",
+      summary: "Port 8080/tcp opened",
+      createdAt: new Date("2026-01-01"),
+    });
+    const newer = seedWatchAlert({
+      id: "alert-newer",
+      engagementId: "eng-a",
+      discoveryJobId: "job-l",
+      discoveredAssetId: "disc-l",
+      kind: "SERVICE_CHANGED",
+      summary: "Port 443/tcp service/version changed",
+      createdAt: new Date("2026-06-01"),
+    });
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+
+    const res = await request(app).get("/engagements/eng-a/watch-alerts").set("x-test-user", "admin@example.com").expect(200);
+    expect(res.body).toHaveLength(2);
+    expect(res.body[0].id).toBe(newer.id); // newest first
+    expect(res.body[0].hostname).toBe("sub.acme.example"); // decrypted, not the raw envelope
+    expect(res.body[0].kind).toBe("SERVICE_CHANGED");
+  });
+
+  it("404s for a different org's engagement", async () => {
+    seedEngagement({ id: "eng-watch-b", clientId: CLIENT_B });
+    seedUser({ email: "tech@acme.com", name: "Tech", role: "TECHNICAL_CLIENT", orgId: CLIENT_A });
+    await request(app).get("/engagements/eng-watch-b/watch-alerts").set("x-test-user", "tech@acme.com").expect(404);
+  });
+
+  it("returns an empty list, not an error, when there are no alerts yet", async () => {
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    const res = await request(app).get("/engagements/eng-a/watch-alerts").set("x-test-user", "admin@example.com").expect(200);
+    expect(res.body).toEqual([]);
+  });
+});
+
+describe("POST /watch-alerts/:id/acknowledge", () => {
+  it("marks an alert acknowledged with the requesting user's id", async () => {
+    seedAsset({ id: "asset-m", engagementId: "eng-a", type: "WEB", name: "Root", verificationStatus: "VERIFIED" });
+    seedDiscoveryJob({ id: "job-m", engagementId: "eng-a", assetId: "asset-m", tool: "watch", status: "COMPLETE" });
+    seedWatchAlert({
+      id: "alert-m",
+      engagementId: "eng-a",
+      discoveryJobId: "job-m",
+      kind: "NEW_SUBDOMAIN",
+      summary: "New subdomain discovered",
+    });
+    const admin = seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+
+    await request(app).post("/watch-alerts/alert-m/acknowledge").set("x-test-user", "admin@example.com").expect(200);
+
+    const list = await request(app).get("/engagements/eng-a/watch-alerts").set("x-test-user", "admin@example.com").expect(200);
+    const row = list.body.find((a: any) => a.id === "alert-m");
+    expect(row.acknowledgedAt).toBeTruthy();
+    expect(row.acknowledgedBy).toBe(admin.id);
+  });
+
+  it("400s acknowledging an alert twice", async () => {
+    seedWatchAlert({
+      id: "alert-n",
+      engagementId: "eng-a",
+      discoveryJobId: "job-n",
+      kind: "NEW_SUBDOMAIN",
+      summary: "New subdomain discovered",
+      acknowledgedAt: new Date(),
+      acknowledgedBy: "someone",
+    });
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    await request(app).post("/watch-alerts/alert-n/acknowledge").set("x-test-user", "admin@example.com").expect(400);
+  });
+
+  it("404s acknowledging another org's alert", async () => {
+    seedEngagement({ id: "eng-watch-c", clientId: CLIENT_B });
+    seedWatchAlert({
+      id: "alert-o",
+      engagementId: "eng-watch-c",
+      discoveryJobId: "job-o",
+      kind: "NEW_SUBDOMAIN",
+      summary: "New subdomain discovered",
+    });
+    seedUser({ email: "tech@acme.com", name: "Tech", role: "TECHNICAL_CLIENT", orgId: CLIENT_A });
+    await request(app).post("/watch-alerts/alert-o/acknowledge").set("x-test-user", "tech@acme.com").expect(404);
+  });
+
+  it("404s for a nonexistent alert", async () => {
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    await request(app).post("/watch-alerts/does-not-exist/acknowledge").set("x-test-user", "admin@example.com").expect(404);
   });
 });

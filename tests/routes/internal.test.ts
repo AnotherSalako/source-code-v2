@@ -51,3 +51,16 @@ describe("GET /internal/scheduled-scans", () => {
     expect(res.body).toHaveProperty("skipped");
   });
 });
+
+describe("GET /internal/scheduled-watch", () => {
+  it("401s with a wrong/missing bearer secret", async () => {
+    await request(app).get("/internal/scheduled-watch").expect(401);
+  });
+
+  it("200s with the correct secret and reports what it started/skipped (startWatchCycle is mocked — this only verifies the auth gate and eligibility query)", async () => {
+    if (!REAL_CRON_SECRET) return;
+    const res = await request(app).get("/internal/scheduled-watch").set("Authorization", `Bearer ${REAL_CRON_SECRET}`).expect(200);
+    expect(res.body).toHaveProperty("started");
+    expect(res.body).toHaveProperty("skipped");
+  });
+});

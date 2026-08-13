@@ -284,6 +284,7 @@ model Engagement {
   scanJobs         ScanJob[]
   discoveryJobs    DiscoveryJob[]
   discoveredAssets DiscoveredAsset[]
+  watchAlerts      WatchAlert[]
 
   @@index([clientId])
 }
@@ -397,6 +398,8 @@ model DiscoveryJob {
   discoveredCount Int?
   createdAt       DateTime      @default(now())
 
+  watchAlerts WatchAlert[]
+
   discoveredAssets DiscoveredAsset[]
 
   @@index([engagementId])
@@ -429,9 +432,59 @@ model DiscoveredAsset {
   reviewedAt      DateTime?
   createdAt       DateTime              @default(now())
 
+  // Set on the original discovery run and every subsequent watch cycle —
+  // null means "never re-checked since first discovered," not an error.
+  // Watch mode (src/modules/discovery/watch-runner.ts) is what actually
+  // updates openPorts/portDetails on an *existing* row after the first
+  // discovery run; ordinary discovery (discovery-runner.ts) deliberately
+  // never revisits a hostname it's already seen, so without watch mode
+  // this field would just sit at its initial value forever.
+  lastScannedAt DateTime?
+
+  watchAlerts WatchAlert[]
+
   @@index([engagementId])
   @@index([parentAssetId])
   @@index([status])
+}
+
+enum WatchAlertKind {
+  NEW_SUBDOMAIN // a watch cycle's crt.sh sweep found a hostname never seen before under this root asset
+  PORT_OPENED
+  PORT_CLOSED
+  SERVICE_CHANGED // same port, different service/version banner than last time
+}
+
+// A detected change on an already-known asset — deliberately NOT a Finding.
+// Finding requires a Test (pentest-workflow shape: severity, CVSS,
+// remediation guidance, retest lifecycle) and dedups on assetId+title: none
+// of that fits "port 8080 opened since yesterday," which is a fact about
+// drift, not a vulnerability assessment. A human reviewing this can decide
+// it warrants a real Finding and create one the normal way; watch mode
+// itself only ever surfaces the change.
+model WatchAlert {
+  id                String           @id @default(uuid())
+  engagementId      String
+  engagement        Engagement       @relation(fields: [engagementId], references: [id])
+  discoveredAssetId String?
+  discoveredAsset   DiscoveredAsset? @relation(fields: [discoveredAssetId], references: [id])
+  discoveryJobId    String
+  discoveryJob      DiscoveryJob     @relation(fields: [discoveryJobId], references: [id])
+  kind              WatchAlertKind
+  // Deliberately plain, not encrypted: same sensitivity tier as
+  // DiscoveredAsset.openPorts/portDetails, which this app already stores
+  // unencrypted (port/service facts, not the hostname itself — that stays
+  // in DiscoveredAsset.valueEnc and is decrypted only at read time by
+  // joining on discoveredAssetId, never duplicated into this row).
+  summary       String // e.g. "Port 8080/tcp opened (nginx)" — never includes the hostname
+  details       Json? // { before, after } port/service detail for whichever kind this is
+  acknowledgedAt DateTime?
+  acknowledgedBy String?
+  createdAt      DateTime @default(now())
+
+  @@index([engagementId])
+  @@index([discoveredAssetId])
+  @@index([discoveryJobId])
 }
 
 model Finding {

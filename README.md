@@ -780,6 +780,48 @@ long-running process (DNS lookups and TCP connects don't complete inside a
 single serverless invocation reliably), so it's **not usable on Vercel's
 serverless runtime** on its own. Run it wherever "Website scanning" runs.
 
+## Watch mode
+
+The gap ordinary discovery leaves on purpose: a re-run dedups against
+`DiscoveredAsset` and skips anything already known, so nothing ever
+re-checks whether an *already-known* asset's attack surface changed. Watch
+mode (`src/modules/discovery/watch-runner.ts`) is that missing half —
+`GET /internal/scheduled-watch`, a daily Vercel Cron job (same
+`CRON_SECRET`-bearer pattern as `/internal/scheduled-scans`, no logged-in
+user in a cron context), re-scans every already-known, non-`IGNORED`
+`DiscoveredAsset` under each eligible root asset and diffs the result
+against what's stored, alongside the same crt.sh subdomain hunt ordinary
+discovery already does. Detected changes land as `WatchAlert` rows
+(`PORT_OPENED`/`PORT_CLOSED`/`SERVICE_CHANGED`/`NEW_SUBDOMAIN`) — reviewed
+via `GET /engagements/:id/watch-alerts` and dismissed via
+`POST /watch-alerts/:id/acknowledge`.
+
+**Deliberately not a `Finding`.** `Finding` requires a `Test` (pentest-shape:
+severity, CVSS, remediation workflow) and dedups on `assetId`+`title`; "port
+8080 opened since yesterday" is a fact about drift, not a vulnerability
+assessment, and doesn't fit either. A human reviewing a `WatchAlert` can
+decide it warrants a real `Finding` and create one the normal way — watch
+mode itself only ever surfaces the change.
+
+Tracked as an ordinary `DiscoveryJob` (`tool: "watch"`) rather than a
+parallel table, so job history/audit stays in one place. Same fire-and-forget
+shape as `startScan`/`startDiscovery` (`startWatchCycle` returns as soon as
+the job row exists, not when the cycle finishes) — deliberately, since
+awaiting several full cycles inline in the cron handler risked the
+Vercel function's own timeout becoming the real limit instead of the
+3-minute per-cycle cap.
+
+Live-verified end to end, including a real bug the live test caught:
+seeded a `DiscoveredAsset` with a deliberately-wrong prior port state, ran
+a real cycle against `localhost` (real Nmap re-scan, not a target — the
+crt.sh half of the same cycle only ever queries crt.sh's own database, never
+the asset itself), and confirmed a real `PORT_CLOSED` `WatchAlert` got
+created. First pass revealed that clearing `portDetails` back to empty used
+`undefined` in a Prisma **update** call — which means "leave unchanged"
+there (unlike `create`, where the same value correctly means "store null"),
+so a state with zero open ports never actually cleared the previous scan's
+stale data. Fixed to use `null` explicitly, re-verified live.
+
 ## AI-assisted triage
 
 Jupiter's second addition beyond Enforcer's original scope: an optional
@@ -1095,6 +1137,9 @@ GET    /engagements/:id/discovery-jobs
 GET    /engagements/:id/discovered-assets    (decrypted; the review queue)
 POST   /discovered-assets/:id/promote        (security_admin; NEW only; creates an UNVERIFIED Asset)
 POST   /discovered-assets/:id/ignore         (security_admin; NEW only)
+GET    /engagements/:id/watch-alerts         (decrypted hostname joined in — see "Watch mode")
+POST   /watch-alerts/:id/acknowledge         (not-yet-acknowledged only)
+GET    /internal/scheduled-watch             (cron-only, CRON_SECRET-authenticated — see "Watch mode")
 POST   /engagements/:id/tests                (security_admin; requires authorization)
 GET    /engagements/:id/tests
 PATCH  /engagements/:id/tests/:testId        (security_admin)

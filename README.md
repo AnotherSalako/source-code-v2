@@ -872,6 +872,41 @@ the finding is simply left undrafted — `POST /findings/:id/triage` reports
 creation logs a warning and moves on. A finding never ends up in a partial
 or corrupted state because a model call had a bad day.
 
+## Natural-language querying
+
+`POST /engagements/:id/findings/query { "question": "critical findings from
+the last 30 days" }` — searches findings by describing what you want instead
+of hand-building filter params. Reuses the same `AI_TRIAGE_PROVIDER`
+toggle/credentials as AI triage above (`src/ai/query-provider.ts`,
+`NlQueryProvider`) rather than a second env var: it's the same underlying
+Anthropic account, just a different prompt, and a separate flag would only
+be one more way for the two to silently drift apart.
+
+**The model never runs a query — it only ever describes one.** Its entire
+job is translating a sentence into a plain JSON object (`{severity: [...],
+status: [...], cvssMin, discoveredAfter, titleContains, ...}`); that object
+is *untrusted input* the moment it comes back, re-validated by
+`nl-query.service.ts` against a fixed Zod whitelist before any of it
+reaches Prisma — exactly the same treatment any other client-supplied JSON
+gets. An unrecognized field (a hallucination, or a deliberately adversarial
+prompt trying to get something like a raw SQL clause accepted) is silently
+dropped, not passed through — proven by a test that hands the mock
+provider a field named `sqlWhereClause` alongside valid ones and confirms
+only the valid ones survive. An invalid enum value fails the *whole*
+interpretation (`understood: false`) rather than guessing at partial
+intent, and engagement scoping is supplied by the route from the URL, not
+by anything the model could claim in its output.
+
+**Never a black box.** The response always includes `interpretedFilter`
+alongside the results — the same "show your reasoning" precedent AI triage
+sets by always returning `rationale`, not just a bare answer. A human can
+see exactly what was searched for, not just trust that it was right.
+
+`understood: false` — no provider configured, the request failed, or the
+response didn't survive validation — covers every failure mode the same
+way, on purpose: a caller shouldn't need to tell those apart to know "try
+rephrasing" is the right next step regardless of which one happened.
+
 ## Finding clustering & exploitability ranking
 
 The fourth v2 addition, and deliberately the odd one out: no AI, no schema
@@ -1146,6 +1181,7 @@ PATCH  /engagements/:id/tests/:testId        (security_admin)
 POST   /engagements/:id/tests/:testId/findings (security_admin)
 POST   /engagements/:id/tests/:testId/findings/import (security_admin; bulk, nuclei/normalized)
 GET    /engagements/:id/findings             (?testId= optional filter)
+POST   /engagements/:id/findings/query       ({ question }; AI-interpreted, whitelist-validated — see "Natural-language querying")
 GET    /engagements/:id/roadmap              (bucketed: quick_win/long_term/plan/uncategorized)
 GET    /engagements/:id/findings/clusters    (near-duplicate clusters + exploitability ranking — see "Finding clustering")
 GET    /findings/:id

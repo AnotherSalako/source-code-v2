@@ -14,6 +14,8 @@ import { notifyIfSevere } from "../../notifications";
 import { triageFinding } from "./triage.service";
 import { aiTriage } from "../../ai";
 import { clusterFindings, computeExploitabilityScore, RankedFinding } from "./clustering";
+import { resolveNlQuery } from "./nl-query.service";
+import { sideEffectLimiter } from "../../middleware/rate-limit";
 
 export const findingsRouter = Router({ mergeParams: true });
 
@@ -162,6 +164,49 @@ findingsRouter.get("/engagements/:engagementId/findings", requireAuth, async (re
 
   res.json(findings);
 });
+
+const nlQuerySchema = z.object({ question: z.string().trim().min(1).max(500) });
+
+// Natural-language search over findings — "show me critical findings from
+// the last 30 days" instead of hand-building filter params. The AI's job
+// ends at "translate this sentence into a filter object"; nl-query.service.ts
+// re-validates every field against a fixed whitelist before any of it
+// reaches a database query (see that file's top comment) — the model never
+// gets to run a query, only describe constraints on one Jupiter already
+// knows how to run safely. Always returns the interpreted filter alongside
+// results, same "never a black box" precedent as AI triage always showing
+// its rationale — a human can see exactly what was searched for, not just
+// trust that it was right.
+findingsRouter.post(
+  "/engagements/:engagementId/findings/query",
+  requireAuth,
+  sideEffectLimiter,
+  async (req, res) => {
+    const parsed = nlQuerySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const { engagementId } = req.params;
+    const engagement = await prisma.engagement.findUnique({ where: { id: engagementId }, select: { clientId: true } });
+    if (!engagement || !assertOwnOrg(req, engagement.clientId)) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+
+    const result = await resolveNlQuery(engagementId, parsed.data.question);
+    if (!result.understood) {
+      res.json({
+        understood: false,
+        message: "Couldn't turn that into a search — no AI query provider configured, or the question didn't map to anything searchable. Try rephrasing, or use the filter fields on the findings list directly.",
+        findings: [],
+      });
+      return;
+    }
+
+    res.json({ understood: true, interpretedFilter: result.interpretedFilter, findings: result.findings });
+  }
+);
 
 // Remediation roadmap: still-open findings (OPEN/REMEDIATING — fixed,
 // accepted-risk, and failed-retest findings aren't "on the roadmap" anymore),

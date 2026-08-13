@@ -4,7 +4,7 @@ import { seedUser, seedClient, seedEngagement, seedAsset, seedTest, seedFinding,
 
 const { createApp } = await import("../../src/app");
 const app = createApp();
-const { aiTriage } = await import("../../src/ai");
+const { aiTriage, nlQuery } = await import("../../src/ai");
 
 const CLIENT_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const CLIENT_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
@@ -255,5 +255,119 @@ describe("GET /engagements/:id/findings/clusters — structural dedup + exploita
     const res = await request(app).get("/engagements/eng-a/findings/clusters").set("x-test-user", "admin@example.com").expect(200);
 
     expect(res.body.findings.map((f: any) => f.id)).toEqual(["still-open"]);
+  });
+});
+
+describe("POST /engagements/:id/findings/query — natural-language search", () => {
+  it("understood: false with no results when the provider isn't configured (default mock: null)", async () => {
+    seedFinding({ id: "f-any", testId: "test-a", assetId: ASSET_ID, title: "Anything", severity: "LOW" });
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+
+    const res = await request(app)
+      .post("/engagements/eng-a/findings/query")
+      .set("x-test-user", "admin@example.com")
+      .send({ question: "show me critical findings" })
+      .expect(200);
+
+    expect(res.body.understood).toBe(false);
+    expect(res.body.findings).toEqual([]);
+  });
+
+  it("filters by the AI-interpreted severity/status, and returns the interpreted filter alongside results", async () => {
+    seedFinding({ id: "f-critical-open", testId: "test-a", assetId: ASSET_ID, title: "SQLi", severity: "CRITICAL", status: "OPEN" });
+    seedFinding({ id: "f-critical-fixed", testId: "test-a", assetId: ASSET_ID, title: "XSS", severity: "CRITICAL", status: "RETESTED_PASS" });
+    seedFinding({ id: "f-low", testId: "test-a", assetId: ASSET_ID, title: "Verbose error", severity: "LOW", status: "OPEN" });
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+
+    vi.mocked(nlQuery.translateQuery).mockResolvedValueOnce({ severity: ["CRITICAL"], status: ["OPEN"] });
+
+    const res = await request(app)
+      .post("/engagements/eng-a/findings/query")
+      .set("x-test-user", "admin@example.com")
+      .send({ question: "critical findings still open" })
+      .expect(200);
+
+    expect(res.body.understood).toBe(true);
+    expect(res.body.interpretedFilter).toEqual({ severity: ["CRITICAL"], status: ["OPEN"] });
+    expect(res.body.findings.map((f: any) => f.id)).toEqual(["f-critical-open"]);
+  });
+
+  it("filters by title substring (case-insensitive)", async () => {
+    seedFinding({ id: "f-csp", testId: "test-a", assetId: ASSET_ID, title: "Missing CSP header", severity: "MEDIUM" });
+    seedFinding({ id: "f-other", testId: "test-a", assetId: ASSET_ID, title: "Weak TLS config", severity: "MEDIUM" });
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+
+    vi.mocked(nlQuery.translateQuery).mockResolvedValueOnce({ titleContains: "csp" });
+
+    const res = await request(app)
+      .post("/engagements/eng-a/findings/query")
+      .set("x-test-user", "admin@example.com")
+      .send({ question: "anything about CSP" })
+      .expect(200);
+
+    expect(res.body.findings.map((f: any) => f.id)).toEqual(["f-csp"]);
+  });
+
+  it("strips a hallucinated/unknown field rather than failing the whole interpretation", async () => {
+    seedFinding({ id: "f-med", testId: "test-a", assetId: ASSET_ID, title: "Something", severity: "MEDIUM" });
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+
+    vi.mocked(nlQuery.translateQuery).mockResolvedValueOnce({ severity: ["MEDIUM"], sqlWhereClause: "1=1; DROP TABLE finding;" });
+
+    const res = await request(app)
+      .post("/engagements/eng-a/findings/query")
+      .set("x-test-user", "admin@example.com")
+      .send({ question: "medium findings" })
+      .expect(200);
+
+    expect(res.body.understood).toBe(true);
+    expect(res.body.interpretedFilter).toEqual({ severity: ["MEDIUM"] }); // hallucinated field silently dropped, not passed through
+    expect(res.body.findings.map((f: any) => f.id)).toEqual(["f-med"]);
+  });
+
+  it("understood: false when the provider returns an invalid enum value", async () => {
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    vi.mocked(nlQuery.translateQuery).mockResolvedValueOnce({ severity: ["SUPER_CRITICAL"] });
+
+    const res = await request(app)
+      .post("/engagements/eng-a/findings/query")
+      .set("x-test-user", "admin@example.com")
+      .send({ question: "super critical findings" })
+      .expect(200);
+
+    expect(res.body.understood).toBe(false);
+  });
+
+  it("400s an empty question", async () => {
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    await request(app).post("/engagements/eng-a/findings/query").set("x-test-user", "admin@example.com").send({ question: "" }).expect(400);
+  });
+
+  it("404s for a different org's engagement", async () => {
+    seedUser({ email: "tech@acme.com", name: "Tech", role: "TECHNICAL_CLIENT", orgId: CLIENT_A });
+    await request(app)
+      .post("/engagements/eng-b/findings/query")
+      .set("x-test-user", "tech@acme.com")
+      .send({ question: "anything" })
+      .expect(404);
+  });
+
+  it("never returns findings from a different engagement even if the interpreted filter matches everything", async () => {
+    seedFinding({ id: "f-in-a", testId: "test-a", assetId: ASSET_ID, title: "In eng-a", severity: "HIGH" });
+    const assetB = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    seedAsset({ id: assetB, engagementId: "eng-b", type: "WEB", name: "Other org site" });
+    seedTest({ id: "test-b", engagementId: "eng-b", assetId: assetB, type: "MANUAL", testerId: "user_admin" });
+    seedFinding({ id: "f-in-b", testId: "test-b", assetId: assetB, title: "In eng-b", severity: "HIGH" });
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+
+    vi.mocked(nlQuery.translateQuery).mockResolvedValueOnce({ severity: ["HIGH"] }); // no engagement scoping in the filter itself — the route supplies that
+
+    const res = await request(app)
+      .post("/engagements/eng-a/findings/query")
+      .set("x-test-user", "admin@example.com")
+      .send({ question: "high severity findings" })
+      .expect(200);
+
+    expect(res.body.findings.map((f: any) => f.id)).toEqual(["f-in-a"]);
   });
 });

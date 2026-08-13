@@ -71,6 +71,7 @@ vi.mock("../../src/notifications", () => ({
 // exercising the drafted path.
 vi.mock("../../src/ai", () => ({
   aiTriage: { draftTriage: vi.fn().mockResolvedValue(null) },
+  nlQuery: { translateQuery: vi.fn().mockResolvedValue(null) },
 }));
 vi.mock("../../src/modules/findings/triage.service", () => ({
   triageFinding: vi.fn().mockResolvedValue(undefined),
@@ -622,6 +623,13 @@ const prismaMock = {
         const testId = where?.test?.id;
         const testIdField = where?.testId;
         const statusIn = where?.status?.in as string[] | undefined;
+        const severityIn = where?.severity?.in as string[] | undefined;
+        const assetTypeIn = where?.asset?.type?.in as string[] | undefined;
+        const cvssGte = where?.cvssScore?.gte as number | undefined;
+        const cvssLte = where?.cvssScore?.lte as number | undefined;
+        const discoveredGte = where?.discoveredAt?.gte as Date | undefined;
+        const discoveredLte = where?.discoveredAt?.lte as Date | undefined;
+        const titleContains = where?.title?.contains as string | undefined;
         if (testEngagementId) {
           all = all.filter((f) => {
             const test = testsById.get(f.testId);
@@ -631,6 +639,13 @@ const prismaMock = {
         if (testId) all = all.filter((f) => f.testId === testId);
         if (testIdField) all = all.filter((f) => matchWhereField(f.testId, testIdField));
         if (statusIn) all = all.filter((f) => statusIn.includes(f.status));
+        if (severityIn) all = all.filter((f) => severityIn.includes(f.severity));
+        if (assetTypeIn) all = all.filter((f) => assetTypeIn.includes(assetsById.get(f.assetId)?.type ?? ""));
+        if (cvssGte !== undefined) all = all.filter((f) => (f.cvssScore ?? -1) >= cvssGte);
+        if (cvssLte !== undefined) all = all.filter((f) => (f.cvssScore ?? Infinity) <= cvssLte);
+        if (discoveredGte) all = all.filter((f) => f.discoveredAt >= discoveredGte);
+        if (discoveredLte) all = all.filter((f) => f.discoveredAt <= discoveredLte);
+        if (titleContains) all = all.filter((f) => f.title.toLowerCase().includes(titleContains.toLowerCase()));
         return all.map((f) => ({
           ...f,
           test: { engagementId: testsById.get(f.testId)?.engagementId },

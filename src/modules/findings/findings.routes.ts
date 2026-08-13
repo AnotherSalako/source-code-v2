@@ -10,6 +10,8 @@ import { writeAuditLog } from "../audit/audit.service";
 import { importScanItems } from "./import.service";
 import { threatResponse } from "../../threat-response";
 import { notifyIfSevere } from "../../notifications";
+import { triageFinding } from "./triage.service";
+import { aiTriage } from "../../ai";
 
 export const findingsRouter = Router({ mergeParams: true });
 
@@ -68,6 +70,7 @@ findingsRouter.post(
       severity: finding.severity,
       engagementId: req.params.engagementId,
     });
+    void triageFinding(finding.id, { title: f.title, description: f.description, severity: f.severity });
 
     res.status(201).json({ id: finding.id, title: finding.title, severity: finding.severity });
   }
@@ -236,13 +239,36 @@ findingsRouter.get("/findings/:id", requireAuth, async (req, res) => {
   const remediationGuidance = finding.remediationGuidanceEnc
     ? await decryptField(kms, finding.remediationGuidanceEnc as any, `finding:remediationGuidance`)
     : undefined;
+  // AI-drafted fields — same visibility tier as remediationGuidance, kept
+  // clearly separate in the response so a client can never render a draft
+  // as if it were reviewed guidance.
+  const aiRemediationDraft = finding.aiRemediationDraftEnc
+    ? await decryptField(kms, finding.aiRemediationDraftEnc as any, `finding:aiRemediationDraft`)
+    : undefined;
+  const aiTriageRationale = finding.aiTriageRationaleEnc
+    ? await decryptField(kms, finding.aiTriageRationaleEnc as any, `finding:aiTriageRationale`)
+    : undefined;
 
-  res.json({ ...base, description, reproductionSteps, remediationGuidance });
+  res.json({
+    ...base,
+    description,
+    reproductionSteps,
+    remediationGuidance,
+    aiRemediationDraft,
+    aiFalsePositiveLikelihood: finding.aiFalsePositiveLikelihood,
+    aiTriageRationale,
+    aiTriagedAt: finding.aiTriagedAt,
+  });
 });
 
 const patchSchema = z.object({
   status: z.enum(["OPEN", "REMEDIATING", "RETESTED_PASS", "RETESTED_FAIL", "ACCEPTED_RISK"]).optional(),
   remediationEffort: z.enum(["QUICK_WIN", "SMALL", "MEDIUM", "LARGE"]).optional(),
+  // The one-click "promote a draft" action: copies the current
+  // aiRemediationDraftEnc into the real, human-owned remediationGuidanceEnc.
+  // Still an explicit human PATCH, not something the draft step does on its
+  // own — accepting is a decision, not a default.
+  acceptAiRemediationDraft: z.boolean().optional(),
 });
 
 findingsRouter.patch("/findings/:id", requireAuth, requireRole("SECURITY_ADMIN"), async (req, res) => {
@@ -251,9 +277,21 @@ findingsRouter.patch("/findings/:id", requireAuth, requireRole("SECURITY_ADMIN")
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
+
+  let remediationGuidanceEnc: any;
+  if (parsed.data.acceptAiRemediationDraft) {
+    const existing = await prisma.finding.findUnique({ where: { id: req.params.id }, select: { aiRemediationDraftEnc: true } });
+    if (!existing?.aiRemediationDraftEnc) {
+      res.status(400).json({ error: "No AI remediation draft exists for this finding yet — run POST .../findings/:id/triage first" });
+      return;
+    }
+    const draftText = await decryptField(kms, existing.aiRemediationDraftEnc as any, `finding:aiRemediationDraft`);
+    remediationGuidanceEnc = (await encryptField(kms, draftText, `finding:remediationGuidance`)) as any;
+  }
+
   const updated = await prisma.finding.update({
     where: { id: req.params.id },
-    data: { status: parsed.data.status, remediationEffort: parsed.data.remediationEffort },
+    data: { status: parsed.data.status, remediationEffort: parsed.data.remediationEffort, remediationGuidanceEnc },
   });
 
   await writeAuditLog(prisma, {
@@ -265,6 +303,49 @@ findingsRouter.patch("/findings/:id", requireAuth, requireRole("SECURITY_ADMIN")
   });
 
   res.json(updated);
+});
+
+// On-demand (re-)triage — for findings created before this feature existed,
+// or to redraft after a description edit. Unlike the fire-and-forget draft
+// on creation, this awaits the provider so the caller gets the draft (or a
+// clear "nothing drafted") in the same response.
+findingsRouter.post("/findings/:id/triage", requireAuth, requireRole("SECURITY_ADMIN"), async (req, res) => {
+  const finding = await prisma.finding.findUnique({
+    where: { id: req.params.id },
+    include: { test: { include: { engagement: { select: { clientId: true } } } } },
+  });
+  if (!finding || !assertOwnOrg(req, finding.test.engagement.clientId)) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+
+  const description = await decryptField(kms, finding.descriptionEnc as any, `finding:description`);
+  const draft = await aiTriage.draftTriage({ title: finding.title, description, severity: finding.severity });
+
+  if (!draft) {
+    res.json({ drafted: false, message: "No AI triage provider configured (AI_TRIAGE_PROVIDER unset), or the request failed." });
+    return;
+  }
+
+  await prisma.finding.update({
+    where: { id: finding.id },
+    data: {
+      aiRemediationDraftEnc: (await encryptField(kms, draft.remediationGuidance, `finding:aiRemediationDraft`)) as any,
+      aiFalsePositiveLikelihood: draft.falsePositiveLikelihood,
+      aiTriageRationaleEnc: (await encryptField(kms, draft.rationale, `finding:aiTriageRationale`)) as any,
+      aiTriagedAt: new Date(),
+    },
+  });
+
+  await writeAuditLog(prisma, {
+    userId: req.user!.id,
+    action: "UPDATE",
+    resourceType: "finding.aiTriage",
+    resourceId: finding.id,
+    result: "SUCCESS",
+  });
+
+  res.json({ drafted: true, ...draft });
 });
 
 // Active response — always human-triggered by clicking this, never called

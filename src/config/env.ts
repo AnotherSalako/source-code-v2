@@ -9,6 +9,7 @@ function required(name: string): string {
 const kmsProvider = (process.env.KMS_PROVIDER ?? "local") as "local" | "aws";
 const threatResponseProvider = (process.env.THREAT_RESPONSE_PROVIDER ?? "noop") as "noop" | "crowdstrike";
 const esignatureProvider = (process.env.ESIGNATURE_PROVIDER ?? "noop") as "noop" | "documenso";
+const aiTriageProvider = (process.env.AI_TRIAGE_PROVIDER ?? "noop") as "noop" | "anthropic";
 
 export const env = {
   port: parseInt(process.env.PORT ?? "4000", 10),
@@ -102,6 +103,15 @@ export const env = {
   resendApiKey: process.env.RESEND_API_KEY,
   notificationEmailFrom: process.env.NOTIFICATION_EMAIL_FROM,
   notificationEmailTo: process.env.NOTIFICATION_EMAIL_TO,
+
+  // AI-assisted triage (src/ai) — "noop" (default) drafts nothing;
+  // "anthropic" calls the Claude Messages API to draft remediation guidance
+  // and a false-positive likelihood per finding. Always advisory: writes
+  // only to Finding.aiRemediationDraftEnc/aiFalsePositiveLikelihood, never
+  // to the real remediationGuidance/status a human owns — see src/ai/provider.ts.
+  aiTriageProvider,
+  anthropicApiKey: aiTriageProvider === "anthropic" ? required("ANTHROPIC_API_KEY") : process.env.ANTHROPIC_API_KEY,
+  aiTriageModel: process.env.AI_TRIAGE_MODEL ?? "claude-sonnet-5",
 
   // Error tracking (src/config/sentry.ts) — unset means errors only go to
   // the pino logs on this machine, same as always; set it to also get every

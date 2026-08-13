@@ -28,15 +28,28 @@ Promoting a discovered subdomain doesn't skip ownership verification; it
 just means there's now something to verify.
 
 This was chosen as the first addition (over cloud-misconfiguration
-scanning, SBOM/dependency scanning, ticketing integration, attack-path
-visualization, and AI-assisted triage — all considered, all deferred) because
-it extends code that already existed rather than introducing a new
-subsystem: it reuses the exact ownership-verification gate scanning
-depends on, and its jobs follow the same `QUEUED → RUNNING → COMPLETE/FAILED`
-lifecycle, orphan-sweep-on-restart, and dedup-in-application-code patterns
-`ScanJob` already established. Everything else on that list is still worth
-building — see "The actual gap in 'blueprint' as a business model" below,
-which applies to feature scope as much as it applies to deployment tooling.
+scanning, SBOM/dependency scanning, ticketing integration, and attack-path
+visualization — all considered, all still deferred) because it extends
+code that already existed rather than introducing a new subsystem: it
+reuses the exact ownership-verification gate scanning depends on, and its
+jobs follow the same `QUEUED → RUNNING → COMPLETE/FAILED` lifecycle,
+orphan-sweep-on-restart, and dedup-in-application-code patterns `ScanJob`
+already established.
+
+**AI-assisted triage** (`src/ai`, see README "AI-assisted triage") is the
+second addition. Same swappable-provider shape as `ThreatResponseProvider`
+and `ESignatureProvider` — `NoopAiTriageProvider` by default,
+`AnthropicAiTriageProvider` when configured — and the same governing
+constraint as everything else in this doc that touches a security
+decision: the model drafts, a human decides. It never writes to a
+`Finding`'s real `remediationGuidanceEnc` or `status`; those stay entirely
+human-owned, with the AI's output living in structurally separate columns
+(`aiRemediationDraftEnc`, `aiFalsePositiveLikelihood`,
+`aiTriageRationaleEnc`) until an explicit `PATCH` promotes one.
+
+Everything else on the original add-in list is still worth building — see
+"The actual gap in 'blueprint' as a business model" below, which applies to
+feature scope as much as it applies to deployment tooling.
 
 ## What stays the same across a rebuild
 

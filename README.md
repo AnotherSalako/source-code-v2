@@ -597,6 +597,56 @@ long-running process (DNS lookups and TCP connects don't complete inside a
 single serverless invocation reliably), so it's **not usable on Vercel's
 serverless runtime** on its own. Run it wherever "Website scanning" runs.
 
+## AI-assisted triage
+
+Jupiter's second addition beyond Enforcer's original scope: an optional
+AI-assisted first pass on every finding, drafting remediation guidance and
+flagging a false-positive likelihood — for a human to review, edit, or
+discard, never applied automatically. Same "speeds up the human-in-the-loop
+step without removing it" philosophy as the active-response containment
+action (`POST .../findings/:id/response-actions/contain`), which is also
+always human-triggered.
+
+`src/ai` follows the exact same swappable-provider shape as
+`src/threat-response` and `src/esignature`: `AiTriageProvider` is the
+interface, `NoopAiTriageProvider` (default) drafts nothing, and
+`AnthropicAiTriageProvider` (`AI_TRIAGE_PROVIDER=anthropic`) calls the
+[Claude Messages API](https://docs.anthropic.com/) directly via `fetch` —
+no SDK dependency, same convention `src/esignature/providers/documenso.ts`
+uses for its own external calls.
+
+**The draft is structurally separate from real data, not just a UI
+convention.** A `Finding` has `aiRemediationDraftEnc` /
+`aiFalsePositiveLikelihood` / `aiTriageRationaleEnc` / `aiTriagedAt` —
+distinct columns from `remediationGuidanceEnc` and `status`, which only a
+human ever writes to. There is no code path where a model's output lands
+directly in the fields a report or roadmap reads from:
+
+- A draft is requested either automatically (fire-and-forget, on every
+  finding creation — manual and scan-import both) or on demand
+  (`POST /findings/:id/triage`, `security_admin`, useful for findings
+  created before this feature existed or after an edit). Both paths only
+  ever write the `ai*` columns.
+- `GET /findings/:id` returns the draft alongside the real
+  `remediationGuidance` field, clearly separated in the response — a client
+  can't accidentally render one as the other.
+- Promoting a draft into real guidance is one explicit action:
+  `PATCH /findings/:id { "acceptAiRemediationDraft": true }` copies the
+  current draft into `remediationGuidanceEnc`. 400s if no draft exists yet.
+  There's no bulk-accept and no auto-accept-on-creation — every promotion is
+  a deliberate, audit-logged human decision.
+- `rationale` (why the model called the false-positive likelihood what it
+  did) is always stored and always returned alongside the draft — never a
+  bare confidence number with no justification a reviewer can check.
+
+**Failure mode is silence, not a broken finding.** If `AI_TRIAGE_PROVIDER`
+is unset, if the Anthropic API errors, times out, or returns something that
+doesn't parse as the expected JSON shape, `draftTriage()` returns `null` and
+the finding is simply left undrafted — `POST /findings/:id/triage` reports
+`{ drafted: false }` rather than a 500, and the fire-and-forget path on
+creation logs a warning and moves on. A finding never ends up in a partial
+or corrupted state because a model call had a bad day.
+
 ## Scheduled scanning
 
 `GET /internal/scheduled-scans` sweeps every verified `WEB`/`API` asset on
@@ -828,7 +878,8 @@ POST   /engagements/:id/tests/:testId/findings/import (security_admin; bulk, nuc
 GET    /engagements/:id/findings             (?testId= optional filter)
 GET    /engagements/:id/roadmap              (bucketed: quick_win/long_term/plan/uncategorized)
 GET    /findings/:id
-PATCH  /findings/:id                         (security_admin; status and/or remediationEffort)
+PATCH  /findings/:id                         (security_admin; status and/or remediationEffort and/or acceptAiRemediationDraft)
+POST   /findings/:id/triage                  (security_admin; on-demand AI draft — see "AI-assisted triage")
 POST   /findings/:id/evidence                (security_admin, multipart — small files / local storage backend)
 POST   /findings/:id/evidence/presign        (security_admin; 501 if storage backend doesn't support it)
 POST   /findings/:id/evidence/complete       (security_admin; records the row after a direct upload)

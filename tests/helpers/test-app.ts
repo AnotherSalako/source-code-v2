@@ -63,6 +63,15 @@ vi.mock("../../src/notifications", () => ({
   notifyIfSevere: vi.fn().mockResolvedValue(undefined),
   notifySweepHeartbeat: vi.fn().mockResolvedValue(undefined),
 }));
+// Default mirrors NoopAiTriageProvider — no draft, same as AI_TRIAGE_PROVIDER
+// unset. Individual tests override via vi.mocked(aiTriage.draftTriage) when
+// exercising the drafted path.
+vi.mock("../../src/ai", () => ({
+  aiTriage: { draftTriage: vi.fn().mockResolvedValue(null) },
+}));
+vi.mock("../../src/modules/findings/triage.service", () => ({
+  triageFinding: vi.fn().mockResolvedValue(undefined),
+}));
 
 // Real LocalKmsProvider (pure AES-256-GCM, no network) with a fixed test CMK
 // — envelope encryption in tests is the real thing, not faked, so a bug in
@@ -172,6 +181,10 @@ export interface FakeFindingRow {
   status: string;
   remediationEffort: string | null;
   discoveredAt: Date;
+  aiRemediationDraftEnc: unknown;
+  aiFalsePositiveLikelihood: string | null;
+  aiTriageRationaleEnc: unknown;
+  aiTriagedAt: Date | null;
 }
 
 export interface FakeEvidenceRow {
@@ -566,6 +579,10 @@ const prismaMock = {
           status: "OPEN",
           remediationEffort: null,
           discoveredAt: new Date(),
+          aiRemediationDraftEnc: null,
+          aiFalsePositiveLikelihood: null,
+          aiTriageRationaleEnc: null,
+          aiTriagedAt: null,
           ...data,
         };
         findingsById.set(row.id, row);
@@ -953,6 +970,10 @@ export function seedFinding(row: Partial<FakeFindingRow> & { id: string; testId:
     status: "OPEN",
     remediationEffort: null,
     discoveredAt: new Date(),
+    aiRemediationDraftEnc: null,
+    aiFalsePositiveLikelihood: null,
+    aiTriageRationaleEnc: null,
+    aiTriagedAt: null,
     ...row,
   };
   findingsById.set(full.id, full);

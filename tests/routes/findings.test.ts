@@ -1,9 +1,10 @@
 import request from "supertest";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { seedUser, seedClient, seedEngagement, seedAsset, seedTest, seedFinding, resetFakeDb } from "../helpers/test-app";
 
 const { createApp } = await import("../../src/app");
 const app = createApp();
+const { aiTriage } = await import("../../src/ai");
 
 const CLIENT_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const CLIENT_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
@@ -107,5 +108,95 @@ describe("POST /findings/:id/response-actions/contain", () => {
       .send({ target: "some-other-host.evil.com" })
       .expect(200);
     expect(res.body.success).toBe(true);
+  });
+});
+
+describe("AI-assisted triage — advisory-only, never auto-applied", () => {
+  it("POST /findings/:id/triage returns drafted:false when no provider is configured (noop default)", async () => {
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    const created = await request(app)
+      .post("/engagements/eng-a/tests/test-a/findings")
+      .set("x-test-user", "admin@example.com")
+      .send({ assetId: ASSET_ID, title: "XSS", description: "reflected xss on /search", severity: "HIGH" })
+      .expect(201);
+
+    const res = await request(app).post(`/findings/${created.body.id}/triage`).set("x-test-user", "admin@example.com").expect(200);
+    expect(res.body.drafted).toBe(false);
+  });
+
+  it("403s the triage endpoint for a non-admin role", async () => {
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    const created = await request(app)
+      .post("/engagements/eng-a/tests/test-a/findings")
+      .set("x-test-user", "admin@example.com")
+      .send({ assetId: ASSET_ID, title: "X", description: "d", severity: "LOW" })
+      .expect(201);
+
+    seedUser({ email: "tech@acme.com", name: "Tech", role: "TECHNICAL_CLIENT", orgId: CLIENT_A });
+    await request(app).post(`/findings/${created.body.id}/triage`).set("x-test-user", "tech@acme.com").expect(403);
+  });
+
+  it("stores a draft when the provider returns one, visible on GET, without touching the real remediationGuidance", async () => {
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    const created = await request(app)
+      .post("/engagements/eng-a/tests/test-a/findings")
+      .set("x-test-user", "admin@example.com")
+      .send({ assetId: ASSET_ID, title: "Missing CSP header", description: "no content-security-policy header set", severity: "MEDIUM" })
+      .expect(201);
+
+    vi.mocked(aiTriage.draftTriage).mockResolvedValueOnce({
+      remediationGuidance: "Add a Content-Security-Policy header restricting script-src to self.",
+      falsePositiveLikelihood: "LOW",
+      rationale: "The response genuinely lacks the header across all tested paths.",
+    });
+
+    const triageRes = await request(app).post(`/findings/${created.body.id}/triage`).set("x-test-user", "admin@example.com").expect(200);
+    expect(triageRes.body.drafted).toBe(true);
+    expect(triageRes.body.falsePositiveLikelihood).toBe("LOW");
+
+    const getRes = await request(app).get(`/findings/${created.body.id}`).set("x-test-user", "admin@example.com").expect(200);
+    expect(getRes.body.aiRemediationDraft).toContain("Content-Security-Policy");
+    expect(getRes.body.aiFalsePositiveLikelihood).toBe("LOW");
+    expect(getRes.body.remediationGuidance).toBeUndefined();
+  });
+
+  it("PATCH acceptAiRemediationDraft 400s when no draft exists yet", async () => {
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    const created = await request(app)
+      .post("/engagements/eng-a/tests/test-a/findings")
+      .set("x-test-user", "admin@example.com")
+      .send({ assetId: ASSET_ID, title: "No draft yet", description: "d", severity: "LOW" })
+      .expect(201);
+
+    await request(app)
+      .patch(`/findings/${created.body.id}`)
+      .set("x-test-user", "admin@example.com")
+      .send({ acceptAiRemediationDraft: true })
+      .expect(400);
+  });
+
+  it("PATCH acceptAiRemediationDraft promotes the draft into the real remediationGuidance", async () => {
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    const created = await request(app)
+      .post("/engagements/eng-a/tests/test-a/findings")
+      .set("x-test-user", "admin@example.com")
+      .send({ assetId: ASSET_ID, title: "Weak TLS config", description: "TLS 1.0 still enabled", severity: "MEDIUM" })
+      .expect(201);
+
+    vi.mocked(aiTriage.draftTriage).mockResolvedValueOnce({
+      remediationGuidance: "Disable TLS 1.0/1.1 in the server config and require TLS 1.2+.",
+      falsePositiveLikelihood: "LOW",
+      rationale: "Confirmed via handshake test.",
+    });
+    await request(app).post(`/findings/${created.body.id}/triage`).set("x-test-user", "admin@example.com").expect(200);
+
+    await request(app)
+      .patch(`/findings/${created.body.id}`)
+      .set("x-test-user", "admin@example.com")
+      .send({ acceptAiRemediationDraft: true })
+      .expect(200);
+
+    const getRes = await request(app).get(`/findings/${created.body.id}`).set("x-test-user", "admin@example.com").expect(200);
+    expect(getRes.body.remediationGuidance).toBe("Disable TLS 1.0/1.1 in the server config and require TLS 1.2+.");
   });
 });

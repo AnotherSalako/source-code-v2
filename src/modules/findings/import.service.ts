@@ -3,6 +3,7 @@ import { kms } from "../../crypto";
 import { decryptField, encryptField } from "../../crypto/envelope";
 import { adaptNucleiResult, normalizedImportItemSchema, NormalizedImportItem } from "./scan-import";
 import { notifyIfSevere } from "../../notifications";
+import { triageFinding } from "./triage.service";
 
 export interface ImportOutcome {
   createdIds: string[];
@@ -100,6 +101,11 @@ export async function importScanItems(params: {
     });
     createdIds.push(finding.id);
     void notifyIfSevere({ findingId: finding.id, title: finding.title, severity: finding.severity, engagementId });
+    // Scan imports are exactly where an AI-drafted remediation suggestion
+    // earns its keep most — a scanner reports the same handful of finding
+    // shapes constantly, and a first-pass draft here is what a human
+    // actually reviews rather than starting from a blank field.
+    void triageFinding(finding.id, { title: normalized.title, description: normalized.description, severity: normalized.severity });
     openKeys.add(`${assetId}::${normalized.title}`); // same import batch reporting the same issue twice
   }
 

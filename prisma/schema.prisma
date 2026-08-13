@@ -100,6 +100,12 @@ enum RemediationEffort {
   LARGE
 }
 
+enum FalsePositiveLikelihood {
+  LOW
+  MEDIUM
+  HIGH
+}
+
 enum TrainingTopic {
   PHISHING
   PASSWORD_HYGIENE
@@ -431,6 +437,16 @@ model Finding {
   status                 FindingStatus @default(OPEN)
   discoveredAt           DateTime      @default(now())
   updatedAt              DateTime      @updatedAt
+
+  // AI-assisted triage (src/ai) — deliberately separate from the fields
+  // above rather than writing into remediationGuidanceEnc/status directly.
+  // A draft only ever becomes real guidance when a human PATCHes
+  // acceptAiRemediationDraft: true (findings.routes.ts); nothing here is
+  // ever read as ground truth on its own.
+  aiRemediationDraftEnc     Json? // EncryptedField
+  aiFalsePositiveLikelihood FalsePositiveLikelihood?
+  aiTriageRationaleEnc      Json? // EncryptedField — shown to the reviewer alongside the draft, never hidden
+  aiTriagedAt               DateTime?
 
   evidence Evidence[]
   retests  Retest[]

@@ -102,6 +102,7 @@ export default function Dashboard() {
   );
 
   const recentEngagements = rollups.slice(0, 3);
+  const recentClients = clients.slice(0, 5);
 
   if (loading) {
     return (
@@ -200,7 +201,24 @@ export default function Dashboard() {
         </DarkCard>
       </div>
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+      <div className={`grid grid-cols-1 gap-5 ${isAdmin && recentClients.length > 0 ? "lg:grid-cols-3" : "lg:grid-cols-2"}`}>
+        {isAdmin && recentClients.length > 0 && (
+          <Card>
+            <p className="mb-4 text-sm font-medium text-ink-soft">Recent clients</p>
+            <div className="flex flex-col gap-0.5">
+              {recentClients.map((client) => (
+                <Link
+                  key={client.id}
+                  to={`/clients/${client.id}`}
+                  className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm text-ink-soft transition-colors hover:bg-line-soft hover:text-ink"
+                >
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ink/30" />
+                  <span className="truncate">{client.name}</span>
+                </Link>
+              ))}
+            </div>
+          </Card>
+        )}
         <Card>
           <p className="mb-4 text-sm font-medium text-ink-soft">Open critical &amp; high findings</p>
           {openCriticalFindings.length === 0 ? (

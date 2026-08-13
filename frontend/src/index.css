@@ -29,6 +29,26 @@
   --shadow-lift-lg: 0 2px 4px rgb(23 22 20 / 0.05), 0 24px 48px -16px rgb(23 22 20 / 0.18);
 }
 
+/* Dark theme: same warm-neutral, restrained-color identity, values inverted
+   rather than swapped for a generic slate/black — "ink" becomes the ground,
+   "paper" becomes the near-white text color. Severity/risk colors stay put;
+   they're the one place color carries meaning, in both themes. Toggled via
+   ThemeProvider (frontend/src/lib/theme.tsx), which sets data-theme on
+   <html> and persists the choice in localStorage. */
+:root[data-theme="dark"] {
+  --color-paper: #17161a;
+  --color-surface: #211f22;
+  --color-surface-glass: rgb(33 31 34 / 0.72);
+  --color-ink: #f3f1ec;
+  --color-ink-soft: #c7c3ba;
+  --color-ink-faint: #8b877e;
+  --color-line: rgb(243 241 236 / 0.1);
+  --color-line-soft: rgb(243 241 236 / 0.06);
+
+  --shadow-lift: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px -12px rgb(0 0 0 / 0.5);
+  --shadow-lift-lg: 0 2px 4px rgb(0 0 0 / 0.35), 0 24px 48px -16px rgb(0 0 0 / 0.6);
+}
+
 html,
 body,
 #root {

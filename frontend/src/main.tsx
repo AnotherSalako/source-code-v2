@@ -4,6 +4,7 @@ import { ClerkProvider } from "@clerk/clerk-react";
 import * as Sentry from "@sentry/react";
 import "./index.css";
 import App from "./App.tsx";
+import { ThemeProvider } from "./lib/theme";
 
 const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 if (!CLERK_PUBLISHABLE_KEY) {
@@ -21,7 +22,9 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <Sentry.ErrorBoundary fallback={<ErrorFallback />}>
       <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY} signInUrl="/login" afterSignOutUrl="/login">
-        <App />
+        <ThemeProvider>
+          <App />
+        </ThemeProvider>
       </ClerkProvider>
     </Sentry.ErrorBoundary>
   </StrictMode>

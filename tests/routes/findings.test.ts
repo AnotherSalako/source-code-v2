@@ -4,7 +4,7 @@ import { seedUser, seedClient, seedEngagement, seedAsset, seedTest, seedFinding,
 
 const { createApp } = await import("../../src/app");
 const app = createApp();
-const { aiTriage, nlQuery } = await import("../../src/ai");
+const { aiTriage, nlQuery, attackPathAi } = await import("../../src/ai");
 
 const CLIENT_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const CLIENT_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
@@ -369,5 +369,81 @@ describe("POST /engagements/:id/findings/query — natural-language search", () 
       .expect(200);
 
     expect(res.body.findings.map((f: any) => f.id)).toEqual(["f-in-a"]);
+  });
+});
+
+describe("GET /engagements/:id/attack-paths", () => {
+  const WEB_ASSET = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+  const DC_ASSET = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+
+  it("returns structural candidates with no narrative when no AI provider is configured (default mock: null)", async () => {
+    seedAsset({ id: WEB_ASSET, engagementId: "eng-a", type: "WEB", name: "Public site", criticality: "LOW" });
+    seedAsset({ id: DC_ASSET, engagementId: "eng-a", type: "SERVER", name: "Domain controller", criticality: "CRITICAL" });
+    seedTest({ id: "test-web", engagementId: "eng-a", assetId: WEB_ASSET, type: "MANUAL", testerId: "user_admin" });
+    seedTest({ id: "test-dc", engagementId: "eng-a", assetId: DC_ASSET, type: "MANUAL", testerId: "user_admin" });
+    seedFinding({ id: "f-entry", testId: "test-web", assetId: WEB_ASSET, title: "SQLi in login form", severity: "CRITICAL", status: "OPEN" });
+    seedFinding({ id: "f-target", testId: "test-dc", assetId: DC_ASSET, title: "Weak local admin password", severity: "MEDIUM", status: "OPEN" });
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+
+    const res = await request(app).get("/engagements/eng-a/attack-paths").set("x-test-user", "admin@example.com").expect(200);
+
+    expect(res.body.paths).toHaveLength(1);
+    expect(res.body.paths[0].entryFindingId).toBe("f-entry");
+    expect(res.body.paths[0].targetFindingId).toBe("f-target");
+    expect(res.body.paths[0].narrative).toBeNull();
+    expect(res.body.paths[0].plausibility).toBeNull();
+  });
+
+  it("attaches the AI narrative when the provider returns one, matched by index", async () => {
+    seedAsset({ id: WEB_ASSET, engagementId: "eng-a", type: "WEB", name: "Public site", criticality: "LOW" });
+    seedAsset({ id: DC_ASSET, engagementId: "eng-a", type: "SERVER", name: "Domain controller", criticality: "CRITICAL" });
+    seedTest({ id: "test-web", engagementId: "eng-a", assetId: WEB_ASSET, type: "MANUAL", testerId: "user_admin" });
+    seedTest({ id: "test-dc", engagementId: "eng-a", assetId: DC_ASSET, type: "MANUAL", testerId: "user_admin" });
+    seedFinding({ id: "f-entry", testId: "test-web", assetId: WEB_ASSET, title: "SQLi in login form", severity: "CRITICAL", status: "OPEN" });
+    seedFinding({ id: "f-target", testId: "test-dc", assetId: DC_ASSET, title: "Weak local admin password", severity: "MEDIUM", status: "OPEN" });
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+
+    vi.mocked(attackPathAi.narratePaths).mockResolvedValueOnce([
+      { index: 0, narrative: "SQLi could yield DB credentials reused on the domain controller.", plausibility: "MEDIUM" },
+    ]);
+
+    const res = await request(app).get("/engagements/eng-a/attack-paths").set("x-test-user", "admin@example.com").expect(200);
+
+    expect(res.body.paths[0].narrative).toContain("DB credentials");
+    expect(res.body.paths[0].plausibility).toBe("MEDIUM");
+  });
+
+  it("drops a narration whose index is out of range rather than trusting it", async () => {
+    seedAsset({ id: WEB_ASSET, engagementId: "eng-a", type: "WEB", name: "Public site", criticality: "LOW" });
+    seedAsset({ id: DC_ASSET, engagementId: "eng-a", type: "SERVER", name: "Domain controller", criticality: "CRITICAL" });
+    seedTest({ id: "test-web", engagementId: "eng-a", assetId: WEB_ASSET, type: "MANUAL", testerId: "user_admin" });
+    seedTest({ id: "test-dc", engagementId: "eng-a", assetId: DC_ASSET, type: "MANUAL", testerId: "user_admin" });
+    seedFinding({ id: "f-entry", testId: "test-web", assetId: WEB_ASSET, title: "SQLi in login form", severity: "CRITICAL", status: "OPEN" });
+    seedFinding({ id: "f-target", testId: "test-dc", assetId: DC_ASSET, title: "Weak local admin password", severity: "MEDIUM", status: "OPEN" });
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+
+    vi.mocked(attackPathAi.narratePaths).mockResolvedValueOnce([
+      { index: 7, narrative: "A narration for a pair that was never sent.", plausibility: "HIGH" },
+    ]);
+
+    const res = await request(app).get("/engagements/eng-a/attack-paths").set("x-test-user", "admin@example.com").expect(200);
+
+    expect(res.body.paths).toHaveLength(1); // the one real structural candidate
+    expect(res.body.paths[0].narrative).toBeNull(); // the out-of-range narration never got attached to it
+  });
+
+  it("returns an empty list, not an error, when nothing meets the entry/target bar", async () => {
+    seedAsset({ id: WEB_ASSET, engagementId: "eng-a", type: "WEB", name: "Public site", criticality: "LOW" });
+    seedTest({ id: "test-web", engagementId: "eng-a", assetId: WEB_ASSET, type: "MANUAL", testerId: "user_admin" });
+    seedFinding({ id: "f-low", testId: "test-web", assetId: WEB_ASSET, title: "Verbose error page", severity: "LOW", status: "OPEN" });
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+
+    const res = await request(app).get("/engagements/eng-a/attack-paths").set("x-test-user", "admin@example.com").expect(200);
+    expect(res.body.paths).toEqual([]);
+  });
+
+  it("404s for a different org's engagement", async () => {
+    seedUser({ email: "tech@acme.com", name: "Tech", role: "TECHNICAL_CLIENT", orgId: CLIENT_A });
+    await request(app).get("/engagements/eng-b/attack-paths").set("x-test-user", "tech@acme.com").expect(404);
   });
 });

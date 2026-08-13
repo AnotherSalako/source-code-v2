@@ -72,6 +72,7 @@ vi.mock("../../src/notifications", () => ({
 vi.mock("../../src/ai", () => ({
   aiTriage: { draftTriage: vi.fn().mockResolvedValue(null) },
   nlQuery: { translateQuery: vi.fn().mockResolvedValue(null) },
+  attackPathAi: { narratePaths: vi.fn().mockResolvedValue(null) },
 }));
 vi.mock("../../src/modules/findings/triage.service", () => ({
   triageFinding: vi.fn().mockResolvedValue(undefined),

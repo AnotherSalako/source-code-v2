@@ -15,6 +15,7 @@ import { triageFinding } from "./triage.service";
 import { aiTriage } from "../../ai";
 import { clusterFindings, computeExploitabilityScore, RankedFinding } from "./clustering";
 import { resolveNlQuery } from "./nl-query.service";
+import { computeAttackPaths } from "./attack-path.service";
 import { sideEffectLimiter } from "../../middleware/rate-limit";
 
 export const findingsRouter = Router({ mergeParams: true });
@@ -295,6 +296,26 @@ findingsRouter.get("/engagements/:engagementId/findings/clusters", requireAuth, 
   ranked.sort((a, b) => b.exploitability.score - a.exploitability.score);
 
   res.json({ findings: ranked, clusters: clusterFindings(ranked) });
+});
+
+// Structural co-occurrence, not proven network reachability — Jupiter
+// doesn't model which asset can actually reach which other asset, so this
+// is deliberately NOT called a "confirmed path." An entry point (a
+// HIGH/CRITICAL finding on an internet-facing asset) paired with a target
+// (a live finding on a high-criticality asset) is a fact worth a human's
+// attention; the optional AI narrative (attack-path.service.ts) explains
+// *why* it might matter, never asserts that it does. Computed on demand
+// like /findings/clusters, never persisted.
+findingsRouter.get("/engagements/:engagementId/attack-paths", requireAuth, async (req, res) => {
+  const { engagementId } = req.params;
+  const engagement = await prisma.engagement.findUnique({ where: { id: engagementId }, select: { clientId: true } });
+  if (!engagement || !assertOwnOrg(req, engagement.clientId)) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+
+  const paths = await computeAttackPaths(engagementId);
+  res.json({ paths });
 });
 
 // Role-gated read: exec_client gets severity/status/title only (business risk

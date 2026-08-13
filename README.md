@@ -941,6 +941,42 @@ similarity check over a few hundred finding titles doesn't). Scoped to
 findings still worth acting on — `OPEN`, `REMEDIATING`, `RETESTED_FAIL` —
 same set the remediation roadmap above uses, plus `RETESTED_FAIL`.
 
+## Attack-path reasoning
+
+`GET /engagements/:id/attack-paths` — and the one place in this feature
+list where the honest scope matters more than the feature name. **Jupiter
+does not model network topology.** There is no "asset A can reach asset B"
+data anywhere in this schema, so anything claiming to trace a *real* attack
+path would be fabricating a signal this app has no basis for. What this
+actually is (`src/modules/findings/attack-path.ts`): structural
+co-occurrence. An "entry point" (a `HIGH`/`CRITICAL` finding on an
+internet-facing, in-scope asset — reuses `computeExploitabilityScore`'s
+existing `internetFacing` signal, not a second definition of the same
+idea) paired with a "target" (a live finding on a `HIGH`/`CRITICAL`-
+criticality asset), excluding pairs on the same asset. That pairing is a
+fact worth a human's attention — it is not proof a path exists, and the
+code comments and this section both say so explicitly rather than letting
+"attack path" imply more than it delivers.
+
+**The optional AI layer only narrates candidates that already exist — it
+never proposes new ones.** The structural pass (bounded: top 5 entry
+points × top 5 targets by exploitability, capped at 10 total pairs) runs
+first and is what actually decides which pairs matter; `attackPathAi`
+(same `AI_TRIAGE_PROVIDER` toggle as triage and NL querying — one
+Anthropic account, three different narrow tasks) is handed the bounded
+list in one batched call and asked to explain *why* each pair might
+matter, referenced only by the index Jupiter assigned it, in 1-3
+sentences, with a LOW/MEDIUM/HIGH plausibility rating. `attack-path.service.ts`
+re-validates every returned item against a Zod schema and — critically —
+checks the index is actually in range before trusting it; a narration for
+index 7 when only 5 pairs were sent is dropped, not attached to whatever
+happens to be at position 7. Losing the AI step (unconfigured, erroring,
+returning nonsense) never loses the underlying candidates — only
+`narrative`/`plausibility` come back `null`.
+
+Computed on demand, like `/findings/clusters` — never persisted, so
+there's nothing to go stale or need invalidating as findings change.
+
 ## Scheduled scanning
 
 `GET /internal/scheduled-scans` sweeps every verified `WEB`/`API` asset on
@@ -1184,6 +1220,7 @@ GET    /engagements/:id/findings             (?testId= optional filter)
 POST   /engagements/:id/findings/query       ({ question }; AI-interpreted, whitelist-validated — see "Natural-language querying")
 GET    /engagements/:id/roadmap              (bucketed: quick_win/long_term/plan/uncategorized)
 GET    /engagements/:id/findings/clusters    (near-duplicate clusters + exploitability ranking — see "Finding clustering")
+GET    /engagements/:id/attack-paths         (structural co-occurrence + optional AI narrative — see "Attack-path reasoning")
 GET    /findings/:id
 PATCH  /findings/:id                         (security_admin; status and/or remediationEffort and/or acceptAiRemediationDraft)
 POST   /findings/:id/triage                  (security_admin; on-demand AI draft — see "AI-assisted triage")

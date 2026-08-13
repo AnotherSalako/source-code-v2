@@ -80,15 +80,16 @@ trigger them the way AI-assisted triage does. Same "never a bare number
 with no justification" discipline as the AI triage rationale, just without
 a model in the loop.
 
-**Endpoint agent enrollment** (`agent/`, see README "Endpoint agent
-enrollment") is the first Jupiter component that isn't this Node app at
-all — a separate Rust CLI, distributed to a client's own machines. Scoped
-deliberately narrow: v1 is enrollment only, no inventory collection yet, no
-remote command execution ever without a fresh design pass, no OS-service
-installation until that's explicitly confirmed (registering a background
-service needs admin/root on every platform — flagged, not quietly
-assumed). The interesting design constraint was Jupiter's own hosting: pure
-Vercel serverless means no persistent process terminates TLS, so real
+**Endpoint agent enrollment + inventory check-in** (`agent/`, see README
+"Endpoint agent enrollment") is the first Jupiter component that isn't this
+Node app at all — a separate Rust CLI, distributed to a client's own
+machines. Still scoped deliberately narrow even after the inventory
+addition: read-only collection only, no remote command execution ever
+without a fresh design pass, no OS-service installation until that's
+explicitly confirmed (registering a background service needs admin/root on
+every platform — flagged, not quietly assumed), no persistent scheduler
+yet either. The interesting design constraint was Jupiter's own hosting:
+pure Vercel serverless means no persistent process terminates TLS, so real
 client-certificate mTLS wasn't available — application-layer request
 signing with the device's own Ed25519 key does the same job without
 needing new infrastructure. Same story as everywhere else a new key was
@@ -98,6 +99,14 @@ KMS-wrapped custody treatment every other key in this app gets, and
 revocation is a boolean flag checked on every request rather than a
 rotation scheme — deliberately the simplest mechanism that's actually
 sufficient for what v1 needs.
+
+The inventory addition kept the same privilege discipline rather than
+relaxing it for convenience: every collected field is unprivileged on every
+platform except Linux firewall state, and rather than have the agent
+request elevation itself, the fix lives in provisioning (a one-time sudoers
+grant for exactly one read-only command) — because this fleet is cloud-VM,
+IaC-provisioned, not manually imaged, which is specifically what makes a
+provisioning-time grant a real option instead of a hand-wave.
 
 Everything else on the original add-in list is still worth building — see
 "The actual gap in 'blueprint' as a business model" below, which applies to

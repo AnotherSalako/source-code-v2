@@ -242,11 +242,14 @@ rather than rotating them in place).
 ## Endpoint agent enrollment
 
 A separate deployable artifact — `agent/`, a Rust CLI, not part of this
-Node app — that lets a client's own machines enroll against their org and
-prove a persistent, cryptographic identity to Jupiter. **v1 is enrollment
-only**: no inventory collection, no remote command execution, no
-OS-service installation yet. See `agent/README.md` for the full scope
-boundary and what's deliberately deferred.
+Node app — that lets a client's own machines enroll against their org,
+prove a persistent cryptographic identity to Jupiter, and report a
+read-only inventory snapshot (OS info, installed software, process names,
+firewall state, network interfaces). **Still deliberately scoped**: no
+remote command execution, no file access, no OS-service installation
+(registering a background service needs admin/root on every platform —
+flagged, not built, pending explicit confirmation), no auto-update. See
+`agent/README.md` for the full scope boundary.
 
 Same non-cert design as everything else that needed one built from scratch
 here: no X.509/TLS chain validation anywhere, so a real certificate would
@@ -278,12 +281,40 @@ headers, a 5-minute replay window). Deploys on the same infrastructure
 everything else already does, no persistent host required — that's the
 tradeoff against real mTLS, made deliberately, not by default.
 
+**Inventory check-in:** `POST /internal/agents/checkin`, same
+`requireDeviceAuth` signature verification as `whoami`, carrying a read-only
+snapshot — OS info, installed software, process names (no memory
+inspection), firewall on/off, network interfaces (no traffic inspection).
+Stored latest-only on `Device.lastInventoryEnc` (tenant-key-encrypted, same
+as every other client-scoped sensitive field — installed-software lists are
+a real attack-surface disclosure about a client's actual machines, not
+metadata to leave unencrypted the way `DiscoveredAsset.openPorts` is).
+`GET /devices/:id/inventory` decrypts it for an admin, `DECRYPT`-audit-logged
+same as scan-job raw results. No history table in v1 — a real "show me the
+trend" view would need one, deferred rather than half-built.
+
+**Privilege discipline carries through to inventory collection.** Every
+field is readable without elevation on every platform except one: Linux
+firewall state needs root. Rather than have the agent request elevation at
+runtime (which would contradict "no elevated actions" from this project's
+own scope) or silently omit the field, the agent runs one narrowly-scoped
+command (`sudo -n ufw status`) that only succeeds if whatever provisions
+the machine (Terraform/Packer/cloud-init) added a one-time sudoers grant for
+exactly that command — documented in `agent/README.md`'s "Privilege model"
+section, with the exact sudoers line to add. Missing the grant degrades the
+one field to `"UNAVAILABLE"`, not a failed check-in.
+
 See `prisma/schema.prisma`'s "Endpoint agent enrollment" section for the
 `AgentCaKey` / `EnrollmentToken` / `Device` model reasoning, and
-`tests/routes/agents.test.ts` for the enrollment race-safety, expiry,
-revocation, and signature-forgery tests this is built against (device
-signature verification is tested against a signature a real, compiled Rust
-binary produced — see `agent/README.md`'s "Building" section for how).
+`tests/routes/agents.test.ts` for the enrollment and check-in race-safety,
+expiry, revocation, and signature-forgery tests this is built against
+(29 tests, including a check-in signed over one body but sent with a
+different one — proving the signature actually binds to the exact request
+sent, not just any request from that device). Device signature verification
+is tested against signatures a real, compiled Rust binary produced; the
+inventory *collection* code itself was compiled and run live on a real
+Windows machine — see `agent/README.md`'s "Building" section for exactly
+what that output looked like.
 
 ## RBAC
 
@@ -1021,8 +1052,10 @@ PATCH  /clients/:id/kms-key                  (security_admin; assigns a dedicate
 POST   /clients/:id/devices/enrollment-tokens (security_admin; single-use, 30-min TTL — see "Endpoint agent enrollment")
 GET    /clients/:id/devices                  (metadata only — no key material ever returned)
 PATCH  /devices/:id/revoke                   (security_admin)
+GET    /devices/:id/inventory                (security_admin; decrypts the latest check-in, DECRYPT-audit-logged)
 POST   /internal/agents/enroll               (token-authenticated, not a logged-in user — redeems an enrollment token)
 GET    /internal/agents/whoami               (device-signature-authenticated — the agent's own self-test)
+POST   /internal/agents/checkin              (device-signature-authenticated — read-only inventory snapshot)
 POST   /engagements                          (security_admin)
 GET    /engagements                          (?clientId= optional filter)
 GET    /engagements/:id

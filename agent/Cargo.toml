@@ -2,7 +2,7 @@
 name = "jupiter-agent"
 version = "0.1.0"
 edition = "2021"
-description = "Jupiter endpoint agent — v1: enrollment only. No inventory collection, no remote command execution, no auto-update. See README.md."
+description = "Jupiter endpoint agent — v1: enrollment + read-only inventory check-in. No remote command execution, no auto-update. See README.md."
 
 [[bin]]
 name = "jupiter-agent"
@@ -20,6 +20,12 @@ sha2 = "0.10"
 anyhow = "1"
 dirs = "6"
 hostname = "0.4"
+# OS/process/network info — cross-platform, pure Rust, no C toolchain
+# needed (unlike reqwest's rustls-tls chain, which does — see README
+# "Building"). Doesn't cover installed-software enumeration (no unified
+# cross-platform API exists for that); see inventory/software.rs for the
+# per-platform approach there instead.
+sysinfo = "0.32"
 
 # Windows/macOS: the real OS credential store (Credential Manager / Keychain)
 # via the `keyring` crate. Linux deliberately excluded — see storage.rs for
@@ -28,3 +34,8 @@ hostname = "0.4"
 # gnome-keyring/kwallet running) covers headless servers, which it doesn't.
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 keyring = "3"
+
+# Windows registry access for installed-software enumeration
+# (HKLM\...\Uninstall) — pure Rust, no C toolchain needed.
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"

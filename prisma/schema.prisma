@@ -658,6 +658,12 @@ model Device {
   enrolledAt      DateTime     @default(now())
   lastCheckInAt   DateTime?
   osVersion       String?
+  // Latest-only, not a history table — a real "show me the trend" view is
+  // real v2 work (a separate append-only snapshot table), not something to
+  // half-build here. EncryptedField, tenant-key-wrapped like everything
+  // else client-scoped: installed software/OS version is a real attack-
+  // surface disclosure about a client's actual machines, not metadata.
+  lastInventoryEnc Json?
   revokedAt       DateTime?
   revokedBy       String? // User.id
 

@@ -253,3 +253,123 @@ describe("GET /internal/agents/whoami — device-signed request auth", () => {
     expect(res.body.clientId).toBe(CLIENT_A);
   });
 });
+
+const SAMPLE_INVENTORY = {
+  os: { name: "Ubuntu", version: "24.04" },
+  software: [{ name: "openssh-server", version: "1:9.6p1-3ubuntu13" }],
+  processes: [{ name: "sshd" }, { name: "nginx" }],
+  firewall: "ENABLED" as const,
+  interfaces: [{ name: "eth0", ip: "10.0.0.5" }],
+  collectedAt: 1_700_000_000,
+};
+
+describe("POST /internal/agents/checkin — inventory check-in", () => {
+  it("401s with no device auth headers", async () => {
+    await request(app).post("/internal/agents/checkin").send(SAMPLE_INVENTORY).expect(401);
+  });
+
+  it("400s on a malformed inventory body", async () => {
+    const { privateKey, publicKeyBase64 } = generateDeviceKeypair();
+    seedDevice({ id: "dev-checkin-bad", clientId: CLIENT_A, name: "x", publicKeyBase64 });
+    const timestamp = Math.floor(Date.now() / 1000);
+    const body = { os: { name: "Ubuntu" } }; // missing required fields
+    const signature = signRequest(privateKey, "POST", "/internal/agents/checkin", timestamp, body);
+    await request(app)
+      .post("/internal/agents/checkin")
+      .set("x-jupiter-device-id", "dev-checkin-bad")
+      .set("x-jupiter-timestamp", String(timestamp))
+      .set("x-jupiter-signature", signature)
+      .send(body)
+      .expect(400);
+  });
+
+  it("401s a revoked device even with a valid signature and body", async () => {
+    const { privateKey, publicKeyBase64 } = generateDeviceKeypair();
+    seedDevice({ id: "dev-checkin-revoked", clientId: CLIENT_A, name: "x", publicKeyBase64, status: "REVOKED" });
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signature = signRequest(privateKey, "POST", "/internal/agents/checkin", timestamp, SAMPLE_INVENTORY);
+    await request(app)
+      .post("/internal/agents/checkin")
+      .set("x-jupiter-device-id", "dev-checkin-revoked")
+      .set("x-jupiter-timestamp", String(timestamp))
+      .set("x-jupiter-signature", signature)
+      .send(SAMPLE_INVENTORY)
+      .expect(401);
+  });
+
+  it("200s on a valid signed check-in and records osVersion + lastCheckInAt", async () => {
+    const { privateKey, publicKeyBase64 } = generateDeviceKeypair();
+    seedDevice({ id: "dev-checkin-ok", clientId: CLIENT_A, name: "x", publicKeyBase64 });
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signature = signRequest(privateKey, "POST", "/internal/agents/checkin", timestamp, SAMPLE_INVENTORY);
+    const res = await request(app)
+      .post("/internal/agents/checkin")
+      .set("x-jupiter-device-id", "dev-checkin-ok")
+      .set("x-jupiter-timestamp", String(timestamp))
+      .set("x-jupiter-signature", signature)
+      .send(SAMPLE_INVENTORY)
+      .expect(200);
+    expect(res.body.received).toBe(true);
+
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    const devices = await request(app).get(`/clients/${CLIENT_A}/devices`).set("x-test-user", "admin@example.com").expect(200);
+    const device = devices.body.find((d: any) => d.id === "dev-checkin-ok");
+    expect(device.osVersion).toBe("Ubuntu 24.04");
+    expect(device.lastCheckInAt).toBeTruthy();
+  });
+
+  it("rejects a signature made over a different body than the one actually sent", async () => {
+    const { privateKey, publicKeyBase64 } = generateDeviceKeypair();
+    seedDevice({ id: "dev-checkin-tamper", clientId: CLIENT_A, name: "x", publicKeyBase64 });
+    const timestamp = Math.floor(Date.now() / 1000);
+    // Sign one payload, send a different one — the body-hash mismatch must fail verification.
+    const signature = signRequest(privateKey, "POST", "/internal/agents/checkin", timestamp, SAMPLE_INVENTORY);
+    const tamperedBody = { ...SAMPLE_INVENTORY, os: { name: "Windows", version: "11" } };
+    await request(app)
+      .post("/internal/agents/checkin")
+      .set("x-jupiter-device-id", "dev-checkin-tamper")
+      .set("x-jupiter-timestamp", String(timestamp))
+      .set("x-jupiter-signature", signature)
+      .send(tamperedBody)
+      .expect(401);
+  });
+});
+
+describe("GET /devices/:id/inventory", () => {
+  it("403s for a non-admin role", async () => {
+    seedDevice({ id: "dev-inv-1", clientId: CLIENT_A, name: "x", publicKeyBase64: "abc" });
+    seedUser({ email: "tech@acme.com", name: "Tech", role: "TECHNICAL_CLIENT", orgId: CLIENT_A });
+    await request(app).get("/devices/dev-inv-1/inventory").set("x-test-user", "tech@acme.com").expect(403);
+  });
+
+  it("404s for a nonexistent device", async () => {
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    await request(app).get("/devices/does-not-exist/inventory").set("x-test-user", "admin@example.com").expect(404);
+  });
+
+  it("returns null inventory before any check-in has happened", async () => {
+    seedDevice({ id: "dev-inv-3", clientId: CLIENT_A, name: "x", publicKeyBase64: "abc" });
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    const res = await request(app).get("/devices/dev-inv-3/inventory").set("x-test-user", "admin@example.com").expect(200);
+    expect(res.body.inventory).toBeNull();
+  });
+
+  it("returns the real decrypted inventory after a genuine check-in round trip", async () => {
+    const { privateKey, publicKeyBase64 } = generateDeviceKeypair();
+    seedDevice({ id: "dev-inv-4", clientId: CLIENT_A, name: "x", publicKeyBase64 });
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signature = signRequest(privateKey, "POST", "/internal/agents/checkin", timestamp, SAMPLE_INVENTORY);
+    await request(app)
+      .post("/internal/agents/checkin")
+      .set("x-jupiter-device-id", "dev-inv-4")
+      .set("x-jupiter-timestamp", String(timestamp))
+      .set("x-jupiter-signature", signature)
+      .send(SAMPLE_INVENTORY)
+      .expect(200);
+
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    const res = await request(app).get("/devices/dev-inv-4/inventory").set("x-test-user", "admin@example.com").expect(200);
+    expect(res.body.inventory).toEqual(SAMPLE_INVENTORY);
+    expect(res.body.collectedAt).toBeTruthy();
+  });
+});

@@ -332,6 +332,7 @@ export interface FakeDeviceRow {
   enrolledAt: Date;
   lastCheckInAt: Date | null;
   osVersion: string | null;
+  lastInventoryEnc: unknown;
   revokedAt: Date | null;
   revokedBy: string | null;
 }
@@ -940,6 +941,7 @@ const prismaMock = {
           enrolledAt: new Date(),
           lastCheckInAt: null,
           osVersion: null,
+          lastInventoryEnc: null,
           revokedAt: null,
           revokedBy: null,
           ...data,
@@ -1229,6 +1231,7 @@ export function seedDevice(
     enrolledAt: new Date(),
     lastCheckInAt: null,
     osVersion: null,
+    lastInventoryEnc: null,
     revokedAt: null,
     revokedBy: null,
     ...row,

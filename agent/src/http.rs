@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::crypto::{signed_payload, DeviceKeypair};
+use crate::inventory::InventorySnapshot;
 
 #[derive(Serialize)]
 struct EnrollRequest<'a> {
@@ -99,4 +100,34 @@ pub fn whoami(server_url: &str, device_id: &str, keypair: &DeviceKeypair) -> Res
     }
 
     Ok(res.json()?)
+}
+
+/// Sends one inventory snapshot. The signature must cover the *exact* bytes
+/// sent, not a re-serialization of them — `.body()` with a pre-serialized
+/// string, not `.json()`'s convenience serialization, so there's no chance
+/// of the signed payload and the wire payload silently diverging.
+pub fn checkin(server_url: &str, device_id: &str, keypair: &DeviceKeypair, snapshot: &InventorySnapshot) -> Result<()> {
+    let client = reqwest::blocking::Client::new();
+    let timestamp = unix_timestamp()?;
+    let body_json = serde_json::to_string(snapshot)?;
+    let payload = signed_payload("POST", "/internal/agents/checkin", timestamp, &body_json);
+    let signature = keypair.sign(payload.as_bytes());
+
+    let res = client
+        .post(format!("{server_url}/internal/agents/checkin"))
+        .header("content-type", "application/json")
+        .header("x-jupiter-device-id", device_id)
+        .header("x-jupiter-timestamp", timestamp.to_string())
+        .header("x-jupiter-signature", signature)
+        .body(body_json)
+        .send()
+        .context("could not reach the Jupiter server")?;
+
+    if !res.status().is_success() {
+        let status = res.status();
+        let text = res.text().unwrap_or_default();
+        bail!("check-in rejected by server ({status}): {text}");
+    }
+
+    Ok(())
 }

@@ -2,6 +2,9 @@ import { Router } from "express";
 import crypto from "crypto";
 import { z } from "zod";
 import { prisma } from "../../db/prisma";
+import { kms } from "../../crypto";
+import { decryptField, encryptField } from "../../crypto/envelope";
+import { tenantKms } from "../../crypto/tenant";
 import { requireAuth } from "../../middleware/auth";
 import { requireRole, assertOwnOrg } from "../../middleware/rbac";
 import { sideEffectLimiter } from "../../middleware/rate-limit";
@@ -165,11 +168,85 @@ agentsRouter.patch("/devices/:id/revoke", requireAuth, requireRole("SECURITY_ADM
 });
 
 // --- Agent: self-test that the signed-credential round trip actually works --
-// Not used for anything operationally yet (inventory reporting is a
-// separate, later piece) — this exists so enrollment is provably complete
-// end to end: a device that can successfully call this has proven its
-// private key, its stored public key, and requireDeviceAuth all agree.
+// This exists so enrollment is provably complete end to end: a device that
+// can successfully call this has proven its private key, its stored public
+// key, and requireDeviceAuth all agree.
 agentsRouter.get("/internal/agents/whoami", requireDeviceAuth, async (req, res) => {
   await prisma.device.update({ where: { id: req.device!.id }, data: { lastCheckInAt: new Date() } });
   res.json({ deviceId: req.device!.id, clientId: req.device!.clientId });
+});
+
+// --- Agent: read-only inventory check-in ------------------------------------
+// Array sizes are capped — defense in depth against a misbehaving or
+// compromised agent sending an unbounded payload, same reasoning as the
+// findings-import item cap elsewhere in this app. Latest-only: this
+// overwrites Device.lastInventoryEnc rather than appending to a history —
+// see schema.prisma for why a real history table is deliberately deferred.
+const inventorySchema = z.object({
+  os: z.object({
+    name: z.string().max(200),
+    version: z.string().max(200),
+    build: z.string().max(200).optional(),
+  }),
+  software: z.array(z.object({ name: z.string().max(500), version: z.string().max(200).optional() })).max(5000),
+  processes: z.array(z.object({ name: z.string().max(500) })).max(2000),
+  firewall: z.enum(["ENABLED", "DISABLED", "UNAVAILABLE"]),
+  interfaces: z.array(z.object({ name: z.string().max(200), ip: z.string().max(100) })).max(50),
+  collectedAt: z.number(),
+});
+
+agentsRouter.post("/internal/agents/checkin", requireDeviceAuth, async (req, res) => {
+  const parsed = inventorySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const scopedKms = await tenantKms(req.device!.clientId);
+
+  await prisma.device.update({
+    where: { id: req.device!.id },
+    data: {
+      lastCheckInAt: new Date(),
+      lastInventoryEnc: (await encryptField(scopedKms, JSON.stringify(parsed.data), `device:lastInventory`)) as any,
+      osVersion: `${parsed.data.os.name} ${parsed.data.os.version}`,
+    },
+  });
+
+  await writeAuditLog(prisma, {
+    userId: null,
+    action: "UPDATE",
+    resourceType: "device.checkin",
+    resourceId: req.device!.id,
+    result: "SUCCESS",
+  });
+
+  res.json({ received: true });
+});
+
+// --- Admin: read a device's latest inventory --------------------------------
+// Same sensitivity tier as scan-jobs' rawResult / evidence — decrypting it
+// is logged (DECRYPT), not just the request itself.
+agentsRouter.get("/devices/:id/inventory", requireAuth, requireRole("SECURITY_ADMIN"), async (req, res) => {
+  const device = await prisma.device.findUnique({ where: { id: req.params.id } });
+  if (!device || !assertOwnOrg(req, device.clientId)) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  if (!device.lastInventoryEnc) {
+    res.json({ inventory: null, collectedAt: null });
+    return;
+  }
+
+  const raw = await decryptField(kms, device.lastInventoryEnc as any, `device:lastInventory`);
+
+  await writeAuditLog(prisma, {
+    userId: req.user!.id,
+    action: "DECRYPT",
+    resourceType: "device.inventory",
+    resourceId: device.id,
+    result: "SUCCESS",
+  });
+
+  res.json({ inventory: JSON.parse(raw), collectedAt: device.lastCheckInAt });
 });

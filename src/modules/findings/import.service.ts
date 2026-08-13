@@ -1,6 +1,7 @@
 import { prisma } from "../../db/prisma";
 import { kms } from "../../crypto";
 import { decryptField, encryptField } from "../../crypto/envelope";
+import { tenantKms } from "../../crypto/tenant";
 import { adaptNucleiResult, normalizedImportItemSchema, NormalizedImportItem } from "./scan-import";
 import { notifyIfSevere } from "../../notifications";
 import { triageFinding } from "./triage.service";
@@ -31,6 +32,10 @@ export async function importScanItems(params: {
   forceAssetId?: string;
 }): Promise<ImportOutcome> {
   const { engagementId, testId, format, items, forceAssetId } = params;
+
+  const engagement = await prisma.engagement.findUnique({ where: { id: engagementId }, select: { clientId: true } });
+  if (!engagement) throw new Error(`No engagement ${engagementId}`);
+  const scopedKms = await tenantKms(engagement.clientId);
 
   let identifierToAssetId: Map<string, string> | null = null;
   if (!forceAssetId) {
@@ -93,9 +98,9 @@ export async function importScanItems(params: {
         title: normalized.title,
         severity: normalized.severity,
         cvssScore: normalized.cvssScore,
-        descriptionEnc: (await encryptField(kms, normalized.description, `finding:description`)) as any,
+        descriptionEnc: (await encryptField(scopedKms, normalized.description, `finding:description`)) as any,
         remediationGuidanceEnc: normalized.remediationGuidance
-          ? ((await encryptField(kms, normalized.remediationGuidance, `finding:remediationGuidance`)) as any)
+          ? ((await encryptField(scopedKms, normalized.remediationGuidance, `finding:remediationGuidance`)) as any)
           : undefined,
       },
     });
@@ -105,7 +110,11 @@ export async function importScanItems(params: {
     // earns its keep most — a scanner reports the same handful of finding
     // shapes constantly, and a first-pass draft here is what a human
     // actually reviews rather than starting from a blank field.
-    void triageFinding(finding.id, { title: normalized.title, description: normalized.description, severity: normalized.severity });
+    void triageFinding(finding.id, engagement.clientId, {
+      title: normalized.title,
+      description: normalized.description,
+      severity: normalized.severity,
+    });
     openKeys.add(`${assetId}::${normalized.title}`); // same import batch reporting the same issue twice
   }
 

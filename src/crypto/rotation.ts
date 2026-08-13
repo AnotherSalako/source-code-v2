@@ -27,6 +27,16 @@ export async function rotateFieldKey(
   if (current.keyVersion === kms.currentKeyVersion() && current.kmsKeyId === kms.currentKeyId()) {
     return { rotated: false }; // already on current key, nothing to do
   }
+  // A record already wrapped under a key that isn't the system default is
+  // on some client's dedicated per-tenant key (src/crypto/tenant.ts) — this
+  // sweep only knows the system key's current id/version, so blindly
+  // "rotating" it here would silently re-wrap it back onto the shared
+  // system key, undoing the tenant assignment. Skip it instead; rotating a
+  // tenant's own key to a new version is real, separate future work, not
+  // something to fake by falling back to the wrong key.
+  if (current.kmsKeyId !== kms.currentKeyId()) {
+    return { rotated: false };
+  }
 
   const plaintext = await decryptField(kms, current, args.aad);
   const reEncrypted = await encryptField(kms, plaintext, args.aad);

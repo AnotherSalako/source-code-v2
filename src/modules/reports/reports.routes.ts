@@ -4,6 +4,7 @@ import { ReportType } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import { kms, objectStorage } from "../../crypto";
 import { encryptBuffer, decryptBuffer } from "../../crypto/envelope";
+import { tenantKms } from "../../crypto/tenant";
 import { newStorageKey } from "../../crypto/storage";
 import { requireAuth } from "../../middleware/auth";
 import { requireRole, assertOwnOrg } from "../../middleware/rbac";
@@ -29,8 +30,15 @@ reportsRouter.post(
     const { engagementId } = req.params;
     const { type } = parsed.data;
 
+    const engagement = await prisma.engagement.findUnique({ where: { id: engagementId }, select: { clientId: true } });
+    if (!engagement) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    const scopedKms = await tenantKms(engagement.clientId);
+
     const content = await buildReportContent(prisma, engagementId, type);
-    const encrypted = await encryptBuffer(kms, content, `report:${engagementId}:${type}`);
+    const encrypted = await encryptBuffer(scopedKms, content, `report:${engagementId}:${type}`);
     const storageKey = newStorageKey(`reports/${engagementId}`);
     await objectStorage.put(storageKey, encrypted.ciphertext);
 

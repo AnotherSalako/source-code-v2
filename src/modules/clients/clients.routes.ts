@@ -178,6 +178,45 @@ clientsRouter.get("/:id/findings-history", requireAuth, async (req, res) => {
   res.json({ totalFindings: findings.length, bySeverity, byStatus, recurring, byEngagement });
 });
 
+const kmsKeySchema = z.object({
+  // The literal key identifier to assign — a real, separately-provisioned
+  // AWS KMS key ARN/alias in production (KMS_PROVIDER=aws; the app never
+  // creates KMS keys itself, see src/crypto/providers/aws-kms.ts), or any
+  // string at all in local dev (KMS_PROVIDER=local derives a distinct
+  // subkey from it via HKDF — see src/crypto/kms.ts).
+  kmsKeyId: z.string().trim().min(1).max(500),
+});
+
+// Assigns this client a dedicated encryption key — everything encrypted
+// for them from this point on (new findings, new assets, new evidence...)
+// wraps under it instead of the shared system key (src/crypto/tenant.ts).
+// Not a forced re-encryption: existing records keep decrypting exactly as
+// before regardless of what key they were originally wrapped under.
+clientsRouter.patch("/:id/kms-key", requireAuth, requireRole("SECURITY_ADMIN"), async (req, res) => {
+  const parsed = kmsKeySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const client = await prisma.client.findUnique({ where: { id: req.params.id } });
+  if (!client) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+
+  await prisma.client.update({ where: { id: client.id }, data: { kmsKeyId: parsed.data.kmsKeyId } });
+
+  await writeAuditLog(prisma, {
+    userId: req.user!.id,
+    action: "UPDATE",
+    resourceType: "client.kmsKey",
+    resourceId: client.id,
+    result: "SUCCESS",
+  });
+
+  res.json({ id: client.id, kmsKeyId: parsed.data.kmsKeyId });
+});
+
 const deleteSchema = z.object({
   // Type-to-confirm against the client's own current name — the same pattern
   // GitHub/Vercel use for "delete this repo/project" — so a stray click or a

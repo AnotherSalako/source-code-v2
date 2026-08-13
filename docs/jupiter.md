@@ -47,6 +47,23 @@ human-owned, with the AI's output living in structurally separate columns
 (`aiRemediationDraftEnc`, `aiFalsePositiveLikelihood`,
 `aiTriageRationaleEnc`) until an explicit `PATCH` promotes one.
 
+**Per-tenant encryption keys** (`src/crypto/tenant.ts`, see README "Per-tenant
+encryption keys") is the third addition, and the one that most directly
+strengthens the "defensible security story" this whole doc is about. Every
+client can move from the shared system CMK onto a dedicated key of their
+own — `PATCH /clients/:id/kms-key` — with no other tenant's data ever
+wrapped by it. What made this tractable rather than a rewrite: the
+envelope-encryption pattern already stored `kmsKeyId` on every encrypted
+field (for rotation), so *decrypting* never needed to change at all —
+only the ~15 call sites that *create* new records needed to swap which
+`KmsProvider` instance they pass in. `LocalKmsProvider` simulates
+per-tenant keys via HKDF-derived subkeys (no separate key provisioning
+needed to test this locally, live-verified in `tests/crypto.test.ts` and
+`tests/routes/clients.test.ts`); `AwsKmsProvider` expects a real,
+separately-provisioned key ARN per tenant, since the app must never call
+`kms:CreateKey` itself (least-privilege IAM, same constraint the system
+key already had).
+
 Everything else on the original add-in list is still worth building — see
 "The actual gap in 'blueprint' as a business model" below, which applies to
 feature scope as much as it applies to deployment tooling.

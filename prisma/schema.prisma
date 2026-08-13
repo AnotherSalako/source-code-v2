@@ -231,6 +231,16 @@ model Client {
   billingInfoEnc    Json? // EncryptedField
   createdAt         DateTime @default(now())
 
+  // Per-tenant encryption key (src/crypto/tenant.ts) — null means this
+  // client's data still encrypts under the shared system CMK, same as
+  // every client before this feature existed; assigning one via
+  // PATCH /clients/:id/kms-key moves NEW encryptions for this client onto
+  // a key no other tenant's data is ever wrapped by. Already-encrypted
+  // records keep decrypting correctly regardless (EncryptedField.kmsKeyId
+  // travels with each record, same mechanism key rotation already relies
+  // on) — assigning a key is not a forced re-encryption.
+  kmsKeyId String?
+
   users       User[]
   engagements Engagement[]
 }

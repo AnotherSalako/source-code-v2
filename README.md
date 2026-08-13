@@ -162,6 +162,83 @@ uploaded file (evidence, generated reports) goes through envelope encryption:
    `LocalObjectStorage` (disk) instead for offline dev/tests. Either way,
    swapping providers happens in exactly one place: `src/crypto/index.ts`.
 
+## Per-tenant encryption keys
+
+Jupiter's third addition beyond Enforcer's original scope, and the one with
+the most direct enterprise-sales relevance: every client can be moved from
+the shared system key everyone started on onto a dedicated key of their
+own — no other tenant's data is ever wrapped by it. Requires **zero new
+environment variables** — it's built entirely on the envelope-encryption
+mechanism above, not a parallel system.
+
+**How it fits the existing design.** `Client.kmsKeyId` (`prisma/schema.prisma`)
+is `null` by default — every client behaves exactly as before until an
+admin calls `PATCH /clients/:id/kms-key { "kmsKeyId": "..." }`. From that
+point on, `src/crypto/tenant.ts`'s `tenantKms(clientId)` resolves a
+`KmsProvider` pinned to that client's key for every *new* encryption — new
+findings, new assets, new evidence, new reports, everything under that
+client. Nothing about `encryptField`/`decryptField`/`encryptBuffer`/
+`decryptBuffer` changed: `tenantKms()` returns an ordinary `KmsProvider`,
+so every call site just swaps which instance it passes in, the same object
+shape the whole crypto module already used everywhere.
+
+**Decrypting never needs to know a record's tenant.** This is the property
+that keeps the migration both correct and small: `EncryptedField.kmsKeyId`
+already travels with every record (it has to, to support key rotation), so
+`decryptField(kms, field, aad)` resolves the right unwrapping key from
+`field.kmsKeyId` regardless of which `KmsProvider` instance is passed in —
+tenant-scoped or the plain system one. Concretely, this means **every
+decrypt call site in the app needed zero changes** — only the ~15 `encrypt`
+call sites that create new records did (`src/modules/*/`), each swapping
+`kms` for `await tenantKms(clientId)` using whatever `clientId` that route
+already resolves for its own `assertOwnOrg` check.
+
+**Not a forced re-encryption.** Assigning a client a key doesn't touch
+their existing data — old records keep decrypting exactly as before,
+whatever key they were originally wrapped under. This is the same
+principle key rotation already relies on, not a new one. (`rotateAllFields()`
+was updated to skip — not silently re-wrap — any record already on a
+non-system key, so the nightly rotation sweep can never undo a tenant-key
+assignment; genuinely rotating a *tenant's own* key to a new version is
+real, separate future work, tracked below.)
+
+**How the two KMS providers implement it:**
+
+- **`LocalKmsProvider` (dev)** derives a distinct 32-byte subkey per
+  `keyId` from the one root CMK via HKDF-SHA256 — no separate key
+  provisioning needed to exercise or test this feature locally. The system
+  default key (no `keyId` passed) still uses the raw CMK unchanged, so this
+  is fully backward compatible with every record encrypted before this
+  feature existed. **Live-verified in this environment** (not just
+  "should work"): `tests/crypto.test.ts` proves a DEK wrapped under one
+  tenant's derived key genuinely fails to unwrap under a different
+  tenant's keyId or the system default, and `tests/routes/clients.test.ts`
+  proves it end to end through the real API — two clients, two assigned
+  keys, two findings created through the ordinary `POST .../findings`
+  route, each finding's `descriptionEnc.kmsKeyId` provably different and
+  each still decrypting correctly through the ordinary `GET /findings/:id`
+  route.
+- **`AwsKmsProvider` (production)** passes the assigned `kmsKeyId` straight
+  through as the `KeyId` on `GenerateDataKeyCommand` — a real,
+  separately-provisioned AWS KMS key ARN/alias, exactly like the existing
+  system key. The app **never creates KMS keys itself** (see the IAM note
+  in `src/crypto/providers/aws-kms.ts`); provisioning each tenant's key is
+  infra work (Terraform/console), done once per client before assigning it
+  via the PATCH endpoint. Inherits this provider's existing "untested
+  against a live AWS account" caveat (see "Deferred to v2" below) — the
+  per-tenant code path is ordinary parameterized `GenerateDataKeyCommand`
+  usage, same SDK call the system key already makes, just confirm it
+  against your own account.
+
+**Deliberately out of scope for this pass:** the app doesn't provision AWS
+KMS keys (infra work, not app code); there's no bulk "migrate all of
+client X's existing data onto their new key" job (would reuse
+`rotation.ts`'s walk-every-table machinery, scoped to one client, but
+wasn't built — assigning a key only affects what's encrypted from that
+point forward); and rotating a *tenant's own* key to a new version isn't
+implemented (`rotateFieldKey` currently just skips non-system-key records
+rather than rotating them in place).
+
 ## RBAC
 
 Three roles (`prisma/schema.prisma` `Role` enum):
@@ -849,6 +926,7 @@ POST   /clients                              (security_admin)
 GET    /clients                              (security_admin: all; client roles: own org only)
 GET    /clients/:id
 GET    /clients/:id/findings-history         (aggregated across every engagement for the client)
+PATCH  /clients/:id/kms-key                  (security_admin; assigns a dedicated per-tenant key — see "Per-tenant encryption keys")
 POST   /engagements                          (security_admin)
 GET    /engagements                          (?clientId= optional filter)
 GET    /engagements/:id

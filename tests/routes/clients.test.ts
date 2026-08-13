@@ -14,6 +14,7 @@ import {
   seedTrainingSession,
   seedScanJob,
   resetFakeDb,
+  getRawFinding,
 } from "../helpers/test-app";
 
 const { createApp } = await import("../../src/app");
@@ -108,6 +109,142 @@ describe("POST /clients", () => {
       .expect(201);
     expect(res.body.name).toBe("New Co");
   });
+});
+
+describe("PATCH /clients/:id/kms-key — per-tenant encryption keys", () => {
+  it("403s for a non-admin role", async () => {
+    seedUser({ email: "tech@acme.com", name: "Tech", role: "TECHNICAL_CLIENT", orgId: "client-a" });
+    seedClient({ id: "client-a", name: "Acme" });
+    await request(app)
+      .patch("/clients/client-a/kms-key")
+      .set("x-test-user", "tech@acme.com")
+      .send({ kmsKeyId: "arn:aws:kms:...:key/tenant-a" })
+      .expect(403);
+  });
+
+  it("404s for a nonexistent client", async () => {
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    await request(app)
+      .patch("/clients/does-not-exist/kms-key")
+      .set("x-test-user", "admin@example.com")
+      .send({ kmsKeyId: "tenant-key" })
+      .expect(404);
+  });
+
+  it("400s on an empty kmsKeyId", async () => {
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    seedClient({ id: "client-a", name: "Acme" });
+    await request(app)
+      .patch("/clients/client-a/kms-key")
+      .set("x-test-user", "admin@example.com")
+      .send({ kmsKeyId: "" })
+      .expect(400);
+  });
+
+  it("200s and assigns the key for a valid admin request", async () => {
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    seedClient({ id: "client-a", name: "Acme" });
+    const res = await request(app)
+      .patch("/clients/client-a/kms-key")
+      .set("x-test-user", "admin@example.com")
+      .send({ kmsKeyId: "tenant-a-key" })
+      .expect(200);
+    expect(res.body.kmsKeyId).toBe("tenant-a-key");
+  });
+
+  it(
+    "two clients with different assigned keys have their findings genuinely encrypted under different keys, " +
+      "each still decrypting correctly end to end through the real API — not just labeled differently",
+    async () => {
+      const CLIENT_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+      const CLIENT_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+      seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+      seedClient({ id: CLIENT_A, name: "Acme" });
+      seedClient({ id: CLIENT_B, name: "Beta Corp" });
+
+      await request(app)
+        .patch(`/clients/${CLIENT_A}/kms-key`)
+        .set("x-test-user", "admin@example.com")
+        .send({ kmsKeyId: "tenant-a-key" })
+        .expect(200);
+      await request(app)
+        .patch(`/clients/${CLIENT_B}/kms-key`)
+        .set("x-test-user", "admin@example.com")
+        .send({ kmsKeyId: "tenant-b-key" })
+        .expect(200);
+
+      const engA = await request(app)
+        .post("/engagements")
+        .set("x-test-user", "admin@example.com")
+        .send({ clientId: CLIENT_A })
+        .expect(201);
+      const engB = await request(app)
+        .post("/engagements")
+        .set("x-test-user", "admin@example.com")
+        .send({ clientId: CLIENT_B })
+        .expect(201);
+      await request(app)
+        .post(`/engagements/${engA.body.id}/authorize`)
+        .set("x-test-user", "admin@example.com")
+        .send({ authorizedBy: "Acme CISO", authorizationDocRef: "docs/a" })
+        .expect(200);
+      await request(app)
+        .post(`/engagements/${engB.body.id}/authorize`)
+        .set("x-test-user", "admin@example.com")
+        .send({ authorizedBy: "Beta CISO", authorizationDocRef: "docs/b" })
+        .expect(200);
+
+      const assetA = await request(app)
+        .post(`/engagements/${engA.body.id}/assets`)
+        .set("x-test-user", "admin@example.com")
+        .send({ type: "WEB", name: "Site A", identifier: "a.example.com" })
+        .expect(201);
+      const assetB = await request(app)
+        .post(`/engagements/${engB.body.id}/assets`)
+        .set("x-test-user", "admin@example.com")
+        .send({ type: "WEB", name: "Site B", identifier: "b.example.com" })
+        .expect(201);
+
+      const testA = await request(app)
+        .post(`/engagements/${engA.body.id}/tests`)
+        .set("x-test-user", "admin@example.com")
+        .send({ assetId: assetA.body.id, type: "PENTEST" })
+        .expect(201);
+      const testB = await request(app)
+        .post(`/engagements/${engB.body.id}/tests`)
+        .set("x-test-user", "admin@example.com")
+        .send({ assetId: assetB.body.id, type: "PENTEST" })
+        .expect(201);
+
+      const findingA = await request(app)
+        .post(`/engagements/${engA.body.id}/tests/${testA.body.id}/findings`)
+        .set("x-test-user", "admin@example.com")
+        .send({ assetId: assetA.body.id, title: "Client A's finding", description: "A-specific detail", severity: "HIGH" })
+        .expect(201);
+      const findingB = await request(app)
+        .post(`/engagements/${engB.body.id}/tests/${testB.body.id}/findings`)
+        .set("x-test-user", "admin@example.com")
+        .send({ assetId: assetB.body.id, title: "Client B's finding", description: "B-specific detail", severity: "HIGH" })
+        .expect(201);
+
+      // The actual security property: each finding's descriptionEnc is
+      // wrapped under its OWN client's assigned key, not a shared one.
+      const rawA = getRawFinding(findingA.body.id);
+      const rawB = getRawFinding(findingB.body.id);
+      expect((rawA?.descriptionEnc as any).kmsKeyId).toBe("tenant-a-key");
+      expect((rawB?.descriptionEnc as any).kmsKeyId).toBe("tenant-b-key");
+      expect((rawA?.descriptionEnc as any).kmsKeyId).not.toBe((rawB?.descriptionEnc as any).kmsKeyId);
+
+      // And each still decrypts correctly through the ordinary read path —
+      // per-tenant keys are additive, never a decrypt-side special case.
+      seedUser({ email: "techA@acme.com", name: "TechA", role: "TECHNICAL_CLIENT", orgId: CLIENT_A });
+      seedUser({ email: "techB@beta.com", name: "TechB", role: "TECHNICAL_CLIENT", orgId: CLIENT_B });
+      const getA = await request(app).get(`/findings/${findingA.body.id}`).set("x-test-user", "techA@acme.com").expect(200);
+      const getB = await request(app).get(`/findings/${findingB.body.id}`).set("x-test-user", "techB@beta.com").expect(200);
+      expect(getA.body.description).toBe("A-specific detail");
+      expect(getB.body.description).toBe("B-specific detail");
+    }
+  );
 });
 
 // Seeds a full dependency graph under one client — engagement, asset, test,

@@ -4,6 +4,7 @@ import { ComplianceFramework, ComplianceStatus } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import { kms } from "../../crypto";
 import { encryptField } from "../../crypto/envelope";
+import { tenantKms } from "../../crypto/tenant";
 import { requireAuth } from "../../middleware/auth";
 import { requireRole, assertOwnOrg } from "../../middleware/rbac";
 import { writeAuditLog } from "../audit/audit.service";
@@ -32,6 +33,13 @@ complianceRouter.post(
     const { engagementId } = req.params;
     const c = parsed.data;
 
+    const engagement = await prisma.engagement.findUnique({ where: { id: engagementId }, select: { clientId: true } });
+    if (!engagement) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    const scopedKms = await tenantKms(engagement.clientId);
+
     const check = await prisma.complianceCheck.create({
       data: {
         engagementId,
@@ -39,7 +47,7 @@ complianceRouter.post(
         controlId: c.controlId,
         controlName: c.controlName,
         status: c.status,
-        notesEnc: c.notes ? ((await encryptField(kms, c.notes, `compliance:notes`)) as any) : undefined,
+        notesEnc: c.notes ? ((await encryptField(scopedKms, c.notes, `compliance:notes`)) as any) : undefined,
       },
     });
 
@@ -137,11 +145,12 @@ complianceRouter.patch(
       return;
     }
 
+    const scopedKms = parsed.data.notes ? await tenantKms(check.engagement.clientId) : kms;
     const updated = await prisma.complianceCheck.update({
       where: { id: check.id },
       data: {
         status: parsed.data.status,
-        notesEnc: parsed.data.notes ? ((await encryptField(kms, parsed.data.notes, `compliance:notes`)) as any) : undefined,
+        notesEnc: parsed.data.notes ? ((await encryptField(scopedKms, parsed.data.notes, `compliance:notes`)) as any) : undefined,
       },
     });
 

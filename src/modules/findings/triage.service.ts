@@ -1,6 +1,6 @@
 import { prisma } from "../../db/prisma";
-import { kms } from "../../crypto";
 import { encryptField } from "../../crypto/envelope";
+import { tenantKms } from "../../crypto/tenant";
 import { logger } from "../../config/logger";
 import { aiTriage } from "../../ai";
 
@@ -11,21 +11,28 @@ import { aiTriage } from "../../ai";
  * explicitly reviews (GET /findings/:id) and accepts
  * (PATCH .../findings/:id { acceptAiRemediationDraft: true }) before a
  * draft becomes real remediation guidance.
+ *
+ * `clientId` is the finding's owning client (its engagement's clientId) —
+ * callers already have this in scope, so it's passed in rather than
+ * re-derived here, and used to encrypt under that client's own key if
+ * they've been assigned one (src/crypto/tenant.ts).
  */
 export async function triageFinding(
   findingId: string,
+  clientId: string,
   input: { title: string; description: string; severity: string }
 ): Promise<void> {
   try {
     const draft = await aiTriage.draftTriage(input);
     if (!draft) return; // no provider configured, or the request failed — leave the finding undrafted, not an error
 
+    const scopedKms = await tenantKms(clientId);
     await prisma.finding.update({
       where: { id: findingId },
       data: {
-        aiRemediationDraftEnc: (await encryptField(kms, draft.remediationGuidance, `finding:aiRemediationDraft`)) as any,
+        aiRemediationDraftEnc: (await encryptField(scopedKms, draft.remediationGuidance, `finding:aiRemediationDraft`)) as any,
         aiFalsePositiveLikelihood: draft.falsePositiveLikelihood,
-        aiTriageRationaleEnc: (await encryptField(kms, draft.rationale, `finding:aiTriageRationale`)) as any,
+        aiTriageRationaleEnc: (await encryptField(scopedKms, draft.rationale, `finding:aiTriageRationale`)) as any,
         aiTriagedAt: new Date(),
       },
     });

@@ -3,6 +3,7 @@ import { AssetType, Criticality } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import { kms } from "../../crypto";
 import { decryptField, encryptField } from "../../crypto/envelope";
+import { tenantKms } from "../../crypto/tenant";
 import { requireAuth } from "../../middleware/auth";
 import { requireRole, assertOwnOrg } from "../../middleware/rbac";
 import { writeAuditLog } from "../audit/audit.service";
@@ -166,6 +167,7 @@ discoveryRouter.post(
     }
 
     const value = await decryptField(kms, row.valueEnc as any, `discoveredAsset:value`);
+    const scopedKms = await tenantKms(row.engagement.clientId);
 
     const asset = await prisma.asset.create({
       data: {
@@ -174,7 +176,7 @@ discoveryRouter.post(
         name: value,
         criticality: Criticality.MEDIUM,
         inScope: true,
-        identifierEnc: (await encryptField(kms, value, `asset:identifier`)) as any,
+        identifierEnc: (await encryptField(scopedKms, value, `asset:identifier`)) as any,
       },
     });
 

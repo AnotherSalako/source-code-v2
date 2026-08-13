@@ -4,6 +4,7 @@ import { TrainingStatus, TrainingTopic } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import { kms } from "../../crypto";
 import { decryptField, encryptField } from "../../crypto/envelope";
+import { tenantKms } from "../../crypto/tenant";
 import { requireAuth } from "../../middleware/auth";
 import { requireRole, assertOwnOrg } from "../../middleware/rbac";
 import { writeAuditLog } from "../audit/audit.service";
@@ -35,13 +36,20 @@ trainingRouter.post(
     const { engagementId } = req.params;
     const t = parsed.data;
 
+    const engagement = await prisma.engagement.findUnique({ where: { id: engagementId }, select: { clientId: true } });
+    if (!engagement) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    const scopedKms = await tenantKms(engagement.clientId);
+
     const session = await prisma.trainingSession.create({
       data: {
         engagementId,
         topic: t.topic,
         customTopic: t.topic === "CUSTOM" ? t.customTopic : undefined,
         scheduledAt: t.scheduledAt,
-        notesEnc: t.notes ? ((await encryptField(kms, t.notes, `training:notes`)) as any) : undefined,
+        notesEnc: t.notes ? ((await encryptField(scopedKms, t.notes, `training:notes`)) as any) : undefined,
       },
     });
 
@@ -112,13 +120,14 @@ trainingRouter.patch(
       return;
     }
 
+    const scopedKms = parsed.data.notes ? await tenantKms(session.engagement.clientId) : kms;
     const updated = await prisma.trainingSession.update({
       where: { id: session.id },
       data: {
         status: parsed.data.status,
         scheduledAt: parsed.data.scheduledAt,
         attendeeCount: parsed.data.attendeeCount,
-        notesEnc: parsed.data.notes ? ((await encryptField(kms, parsed.data.notes, `training:notes`)) as any) : undefined,
+        notesEnc: parsed.data.notes ? ((await encryptField(scopedKms, parsed.data.notes, `training:notes`)) as any) : undefined,
       },
     });
 

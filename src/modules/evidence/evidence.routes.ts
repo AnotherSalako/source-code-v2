@@ -5,6 +5,7 @@ import { z } from "zod";
 import { prisma } from "../../db/prisma";
 import { kms, objectStorage } from "../../crypto";
 import { encryptBuffer, decryptBuffer } from "../../crypto/envelope";
+import { tenantKms } from "../../crypto/tenant";
 import { newStorageKey } from "../../crypto/storage";
 import { requireAuth } from "../../middleware/auth";
 import { requireRole, assertOwnOrg } from "../../middleware/rbac";
@@ -38,13 +39,23 @@ evidenceRouter.post(
     }
     const { findingId } = req.params;
 
+    const finding = await prisma.finding.findUnique({
+      where: { id: findingId },
+      include: { test: { include: { engagement: { select: { clientId: true } } } } },
+    });
+    if (!finding) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    const scopedKms = await tenantKms(finding.test.engagement.clientId);
+
     // Hashed from the plaintext before encryption — the hash itself isn't
     // sensitive (can't be reversed to the file) and lets a malware check run
     // against the file's reputation without ever sending the file itself
     // anywhere.
     const sha256 = createHash("sha256").update(req.file.buffer).digest("hex");
 
-    const encrypted = await encryptBuffer(kms, req.file.buffer, `evidence:${findingId}`);
+    const encrypted = await encryptBuffer(scopedKms, req.file.buffer, `evidence:${findingId}`);
     const storageKey = newStorageKey(`evidence/${findingId}`);
     await objectStorage.put(storageKey, encrypted.ciphertext);
 
@@ -136,7 +147,8 @@ evidenceRouter.post(
     // client-side with this DEK, using the exact same format
     // (12-byte IV, AAD = `evidence:${findingId}`) src/crypto/envelope.ts
     // uses server-side, so either path decrypts identically later.
-    const { plaintextKey, encryptedDataKey, keyId, keyVersion } = await kms.generateDataKey();
+    const scopedKms = await tenantKms(finding.test.engagement.clientId);
+    const { plaintextKey, encryptedDataKey, keyId, keyVersion } = await scopedKms.generateDataKey();
 
     res.json({
       storageKey,

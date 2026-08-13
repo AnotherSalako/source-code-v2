@@ -43,9 +43,17 @@ export class AwsKmsProvider implements KmsProvider {
     return this.keyVersion;
   }
 
-  async generateDataKey(): Promise<DataKeyResult> {
+  async generateDataKey(keyId?: string): Promise<DataKeyResult> {
+    // Per-tenant keys (src/crypto/tenant.ts) pass a specific key ARN/alias
+    // here — a real, separately-provisioned AWS KMS key, not something this
+    // app ever creates itself (see the IAM note at the top of this file:
+    // the execution role gets GenerateDataKey/Decrypt only, never
+    // CreateKey). Provisioning a tenant's dedicated key is infra work
+    // (Terraform/console), done once per client before assigning it via
+    // PATCH /clients/:id/kms-key.
+    const targetKeyId = keyId ?? this.keyId;
     const res = await this.client.send(
-      new GenerateDataKeyCommand({ KeyId: this.keyId, KeySpec: "AES_256" })
+      new GenerateDataKeyCommand({ KeyId: targetKeyId, KeySpec: "AES_256" })
     );
     if (!res.Plaintext || !res.CiphertextBlob) {
       throw new Error("KMS GenerateDataKey returned no key material");
@@ -53,7 +61,7 @@ export class AwsKmsProvider implements KmsProvider {
     return {
       plaintextKey: Buffer.from(res.Plaintext),
       encryptedDataKey: Buffer.from(res.CiphertextBlob),
-      keyId: this.keyId,
+      keyId: targetKeyId,
       keyVersion: this.keyVersion,
     };
   }

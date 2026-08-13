@@ -3,6 +3,7 @@ import net from "net";
 import { prisma } from "../../db/prisma";
 import { kms } from "../../crypto";
 import { decryptField, encryptField } from "../../crypto/envelope";
+import { tenantKms } from "../../crypto/tenant";
 import { logger } from "../../config/logger";
 import { isPrivateAddress } from "../scanning/scan-runner";
 
@@ -106,11 +107,15 @@ export async function startDiscovery(params: {
 
 /** Runs one discovery job end to end. Never throws — every failure mode ends in a FAILED job with errorMessage set. */
 export async function runDiscoveryJob(discoveryJobId: string): Promise<void> {
-  const job = await prisma.discoveryJob.findUniqueOrThrow({ where: { id: discoveryJobId }, include: { asset: true } });
+  const job = await prisma.discoveryJob.findUniqueOrThrow({
+    where: { id: discoveryJobId },
+    include: { asset: true, engagement: { select: { clientId: true } } },
+  });
 
   try {
     await prisma.discoveryJob.update({ where: { id: discoveryJobId }, data: { status: "RUNNING", startedAt: new Date() } });
 
+    const scopedKms = await tenantKms(job.engagement.clientId);
     const identifier = await decryptField(kms, job.asset.identifierEnc as any, `asset:identifier`);
     const rootDomain = bareHostname(identifier);
 
@@ -146,7 +151,7 @@ export async function runDiscoveryJob(discoveryJobId: string): Promise<void> {
           engagementId: job.engagementId,
           parentAssetId: job.assetId,
           discoveryJobId: job.id,
-          valueEnc: (await encryptField(kms, hostname, `discoveredAsset:value`)) as any,
+          valueEnc: (await encryptField(scopedKms, hostname, `discoveredAsset:value`)) as any,
           source: "crt.sh",
           openPorts,
         },

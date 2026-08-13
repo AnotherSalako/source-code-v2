@@ -6,6 +6,7 @@ import dns from "dns/promises";
 import { prisma } from "../../db/prisma";
 import { kms } from "../../crypto";
 import { decryptField, encryptField } from "../../crypto/envelope";
+import { tenantKms } from "../../crypto/tenant";
 import { env } from "../../config/env";
 import { logger } from "../../config/logger";
 import { importScanItems } from "../findings/import.service";
@@ -151,7 +152,10 @@ export async function startScan(params: {
 }
 
 export async function runScanJob(scanJobId: string): Promise<void> {
-  const job = await prisma.scanJob.findUniqueOrThrow({ where: { id: scanJobId }, include: { asset: true } });
+  const job = await prisma.scanJob.findUniqueOrThrow({
+    where: { id: scanJobId },
+    include: { asset: true, engagement: { select: { clientId: true } } },
+  });
 
   try {
     const targetUrl = await decryptField(kms, job.asset.identifierEnc as any, `asset:identifier`);
@@ -208,7 +212,7 @@ export async function runScanJob(scanJobId: string): Promise<void> {
         completedAt: new Date(),
         findingsCreated: outcome.createdIds.length + reputationCreated,
         findingsSkipped: outcome.skipped.length + reputationSkipped,
-        rawResultEnc: raw ? ((await encryptField(kms, raw, `scanjob:rawResult`)) as any) : undefined,
+        rawResultEnc: raw ? ((await encryptField(await tenantKms(job.engagement.clientId), raw, `scanjob:rawResult`)) as any) : undefined,
       },
     });
   } catch (err) {

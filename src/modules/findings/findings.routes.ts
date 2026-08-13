@@ -4,6 +4,7 @@ import { Severity } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import { kms } from "../../crypto";
 import { decryptField, encryptField } from "../../crypto/envelope";
+import { tenantKms } from "../../crypto/tenant";
 import { requireAuth } from "../../middleware/auth";
 import { requireRole, assertOwnOrg } from "../../middleware/rbac";
 import { writeAuditLog } from "../audit/audit.service";
@@ -35,8 +36,15 @@ findingsRouter.post(
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
-    const { testId } = req.params;
+    const { engagementId, testId } = req.params;
     const f = parsed.data;
+
+    const engagement = await prisma.engagement.findUnique({ where: { id: engagementId }, select: { clientId: true } });
+    if (!engagement) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    const scopedKms = await tenantKms(engagement.clientId);
 
     const finding = await prisma.finding.create({
       data: {
@@ -45,12 +53,12 @@ findingsRouter.post(
         title: f.title,
         severity: f.severity,
         cvssScore: f.cvssScore,
-        descriptionEnc: (await encryptField(kms, f.description, `finding:description`)) as any,
+        descriptionEnc: (await encryptField(scopedKms, f.description, `finding:description`)) as any,
         reproductionStepsEnc: f.reproductionSteps
-          ? ((await encryptField(kms, f.reproductionSteps, `finding:reproductionSteps`)) as any)
+          ? ((await encryptField(scopedKms, f.reproductionSteps, `finding:reproductionSteps`)) as any)
           : undefined,
         remediationGuidanceEnc: f.remediationGuidance
-          ? ((await encryptField(kms, f.remediationGuidance, `finding:remediationGuidance`)) as any)
+          ? ((await encryptField(scopedKms, f.remediationGuidance, `finding:remediationGuidance`)) as any)
           : undefined,
       },
     });
@@ -70,7 +78,7 @@ findingsRouter.post(
       severity: finding.severity,
       engagementId: req.params.engagementId,
     });
-    void triageFinding(finding.id, { title: f.title, description: f.description, severity: f.severity });
+    void triageFinding(finding.id, engagement.clientId, { title: f.title, description: f.description, severity: f.severity });
 
     res.status(201).json({ id: finding.id, title: finding.title, severity: finding.severity });
   }
@@ -280,13 +288,17 @@ findingsRouter.patch("/findings/:id", requireAuth, requireRole("SECURITY_ADMIN")
 
   let remediationGuidanceEnc: any;
   if (parsed.data.acceptAiRemediationDraft) {
-    const existing = await prisma.finding.findUnique({ where: { id: req.params.id }, select: { aiRemediationDraftEnc: true } });
+    const existing = await prisma.finding.findUnique({
+      where: { id: req.params.id },
+      include: { test: { include: { engagement: { select: { clientId: true } } } } },
+    });
     if (!existing?.aiRemediationDraftEnc) {
       res.status(400).json({ error: "No AI remediation draft exists for this finding yet — run POST .../findings/:id/triage first" });
       return;
     }
     const draftText = await decryptField(kms, existing.aiRemediationDraftEnc as any, `finding:aiRemediationDraft`);
-    remediationGuidanceEnc = (await encryptField(kms, draftText, `finding:remediationGuidance`)) as any;
+    const scopedKms = await tenantKms(existing.test.engagement.clientId);
+    remediationGuidanceEnc = (await encryptField(scopedKms, draftText, `finding:remediationGuidance`)) as any;
   }
 
   const updated = await prisma.finding.update({
@@ -327,12 +339,13 @@ findingsRouter.post("/findings/:id/triage", requireAuth, requireRole("SECURITY_A
     return;
   }
 
+  const scopedKms = await tenantKms(finding.test.engagement.clientId);
   await prisma.finding.update({
     where: { id: finding.id },
     data: {
-      aiRemediationDraftEnc: (await encryptField(kms, draft.remediationGuidance, `finding:aiRemediationDraft`)) as any,
+      aiRemediationDraftEnc: (await encryptField(scopedKms, draft.remediationGuidance, `finding:aiRemediationDraft`)) as any,
       aiFalsePositiveLikelihood: draft.falsePositiveLikelihood,
-      aiTriageRationaleEnc: (await encryptField(kms, draft.rationale, `finding:aiTriageRationale`)) as any,
+      aiTriageRationaleEnc: (await encryptField(scopedKms, draft.rationale, `finding:aiTriageRationale`)) as any,
       aiTriagedAt: new Date(),
     },
   });

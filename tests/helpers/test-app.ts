@@ -116,6 +116,7 @@ export interface FakeClientRow {
   primaryContactEnc: unknown;
   billingInfoEnc: unknown;
   createdAt: Date;
+  kmsKeyId: string | null;
 }
 
 export interface FakeEngagementRow {
@@ -413,8 +414,13 @@ const prismaMock = {
         return where ? all.filter((c) => c.id === where.id) : all;
       }),
       create: vi.fn(async ({ data }: any) => {
-        const row: FakeClientRow = { id: nextId("client"), industry: null, primaryContactEnc: null, billingInfoEnc: null, createdAt: new Date(), ...data };
+        const row: FakeClientRow = { id: nextId("client"), industry: null, primaryContactEnc: null, billingInfoEnc: null, createdAt: new Date(), kmsKeyId: null, ...data };
         clientsById.set(row.id, row);
+        return row;
+      }),
+      update: vi.fn(async ({ where, data }: any) => {
+        const row = clientsById.get(where.id)!;
+        Object.assign(row, data);
         return row;
       }),
       delete: vi.fn(async ({ where }: any) => {
@@ -908,7 +914,7 @@ export function seedUser(row: Omit<FakeUserRow, "id" | "createdAt" | "lastLoginA
 }
 
 export function seedClient(row: Partial<FakeClientRow> & { id: string; name: string }): FakeClientRow {
-  const full: FakeClientRow = { industry: null, primaryContactEnc: null, billingInfoEnc: null, createdAt: new Date(), ...row };
+  const full: FakeClientRow = { industry: null, primaryContactEnc: null, billingInfoEnc: null, createdAt: new Date(), kmsKeyId: null, ...row };
   clientsById.set(full.id, full);
   return full;
 }
@@ -978,6 +984,16 @@ export function seedFinding(row: Partial<FakeFindingRow> & { id: string; testId:
   };
   findingsById.set(full.id, full);
   return full;
+}
+
+/**
+ * Test-only introspection: reads a finding's raw stored row, including its
+ * `*Enc` fields — the real API never returns these, so per-tenant-key tests
+ * (verifying which kmsKeyId a field actually encrypted under) need direct
+ * access rather than going through a route response.
+ */
+export function getRawFinding(id: string): FakeFindingRow | undefined {
+  return findingsById.get(id);
 }
 
 export function seedEvidence(

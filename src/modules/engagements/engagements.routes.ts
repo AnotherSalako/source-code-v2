@@ -4,6 +4,7 @@ import multer from "multer";
 import { prisma } from "../../db/prisma";
 import { kms, objectStorage } from "../../crypto";
 import { encryptField, decryptField, encryptBuffer, decryptBuffer, EncryptedField } from "../../crypto/envelope";
+import { tenantKms } from "../../crypto/tenant";
 import { newStorageKey } from "../../crypto/storage";
 import { requireAuth } from "../../middleware/auth";
 import { requireRole, assertOwnOrg } from "../../middleware/rbac";
@@ -29,15 +30,16 @@ engagementsRouter.post("/", requireAuth, requireRole("SECURITY_ADMIN"), async (r
     return;
   }
   const { clientId, assumptions, exclusions } = parsed.data;
+  const scopedKms = await tenantKms(clientId);
 
   const engagement = await prisma.engagement.create({
     data: {
       clientId,
       assumptionsEnc: assumptions
-        ? ((await encryptField(kms, assumptions, `engagement:assumptions`)) as EncryptedField as any)
+        ? ((await encryptField(scopedKms, assumptions, `engagement:assumptions`)) as EncryptedField as any)
         : undefined,
       exclusionsEnc: exclusions
-        ? ((await encryptField(kms, exclusions, `engagement:exclusions`)) as EncryptedField as any)
+        ? ((await encryptField(scopedKms, exclusions, `engagement:exclusions`)) as EncryptedField as any)
         : undefined,
     },
   });
@@ -128,15 +130,25 @@ engagementsRouter.patch(
     }
     const { assumptions, exclusions, status } = parsed.data;
 
+    let scopedKms = kms;
+    if (assumptions || exclusions) {
+      const engagement = await prisma.engagement.findUnique({ where: { id: req.params.id }, select: { clientId: true } });
+      if (!engagement) {
+        res.status(404).json({ error: "Not found" });
+        return;
+      }
+      scopedKms = await tenantKms(engagement.clientId);
+    }
+
     const updated = await prisma.engagement.update({
       where: { id: req.params.id },
       data: {
         status,
         assumptionsEnc: assumptions
-          ? ((await encryptField(kms, assumptions, `engagement:assumptions`)) as any)
+          ? ((await encryptField(scopedKms, assumptions, `engagement:assumptions`)) as any)
           : undefined,
         exclusionsEnc: exclusions
-          ? ((await encryptField(kms, exclusions, `engagement:exclusions`)) as any)
+          ? ((await encryptField(scopedKms, exclusions, `engagement:exclusions`)) as any)
           : undefined,
       },
     });
@@ -311,7 +323,8 @@ engagementsRouter.post(
       try {
         const pdfBuffer = await esignature.getSignedDocument(engagement.authorizationEnvelopeId);
         if (pdfBuffer) {
-          const encrypted = await encryptBuffer(kms, pdfBuffer, `authorization-doc:${engagement.id}`);
+          const scopedKms = await tenantKms(engagement.clientId);
+          const encrypted = await encryptBuffer(scopedKms, pdfBuffer, `authorization-doc:${engagement.id}`);
           const storageKey = newStorageKey(`authorization-docs/${engagement.id}`);
           await objectStorage.put(storageKey, encrypted.ciphertext);
           signedDocFields = {

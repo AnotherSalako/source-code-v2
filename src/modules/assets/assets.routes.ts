@@ -4,6 +4,7 @@ import { AssetType, Criticality } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import { kms } from "../../crypto";
 import { decryptField, encryptField } from "../../crypto/envelope";
+import { tenantKms } from "../../crypto/tenant";
 import { requireAuth } from "../../middleware/auth";
 import { requireRole, assertOwnOrg } from "../../middleware/rbac";
 import { writeAuditLog } from "../audit/audit.service";
@@ -34,6 +35,13 @@ assetsRouter.post(
     const { engagementId } = req.params;
     const { type, name, identifier, owner, criticality, inScope, notes } = parsed.data;
 
+    const engagement = await prisma.engagement.findUnique({ where: { id: engagementId }, select: { clientId: true } });
+    if (!engagement) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    const scopedKms = await tenantKms(engagement.clientId);
+
     const asset = await prisma.asset.create({
       data: {
         engagementId,
@@ -42,8 +50,8 @@ assetsRouter.post(
         owner,
         criticality,
         inScope: inScope ?? true,
-        identifierEnc: (await encryptField(kms, identifier, `asset:identifier`)) as any,
-        notesEnc: notes ? ((await encryptField(kms, notes, `asset:notes`)) as any) : undefined,
+        identifierEnc: (await encryptField(scopedKms, identifier, `asset:identifier`)) as any,
+        notesEnc: notes ? ((await encryptField(scopedKms, notes, `asset:notes`)) as any) : undefined,
       },
     });
 

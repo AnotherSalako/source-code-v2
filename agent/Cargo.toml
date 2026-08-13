@@ -33,7 +33,15 @@ sysinfo = "0.32"
 # `keyring`'s Secret Service backend (which assumes a desktop session with
 # gnome-keyring/kwallet running) covers headless servers, which it doesn't.
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
-keyring = "3"
+# features are NOT optional here: keyring 3.x defaults to an in-memory mock
+# backend on every platform unless a real one is explicitly enabled. The
+# mock accepts set_secret() and get_secret() calls without error, so a build
+# without these features looks correct in a single process (enroll, which
+# reads the key straight back from memory) and only fails the moment a
+# *second* process asks for the key — exactly the enroll-then-whoami gap a
+# real device restart would hit. Caught by actually running the compiled
+# binary as two separate processes, not by reasoning about the crate.
+keyring = { version = "3", features = ["windows-native", "apple-native"] }
 
 # Windows registry access for installed-software enumeration
 # (HKLM\...\Uninstall) — pure Rust, no C toolchain needed.

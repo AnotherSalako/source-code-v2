@@ -104,32 +104,43 @@ Visual Studio Build Tools instead. Pick whichever you already have.
 
 **What was actually verified while building this, and how — updated:**
 
-- **Crypto core** (`src/crypto.rs`) — compiled and tested in isolation (zero
-  C dependencies), and a signature it produced was independently checked
-  against the real, unmodified server verification code and matched.
-- **Inventory collection** (`src/inventory/`) — this update's new work, and
-  the strongest verification in this project yet: `sysinfo` and `winreg` are
-  both pure Rust (no C toolchain needed), so the **entire Windows collection
-  path was compiled and actually run on a real Windows machine**, not just
-  reasoned about. Live output included 14 real installed applications
-  (Docker Desktop, Git, VirtualBox, among others actually installed on that
-  machine), 297 real running processes, the real network interfaces
-  (Wi-Fi/Ethernet/a VirtualBox virtual switch, correct IPs for each), and
-  firewall correctly reported as `ENABLED`. The macOS and Linux collection
-  paths (`system_profiler`, `dpkg-query`/`rpm`, `socketfilterfw`, `ufw`)
-  were **not** run live — no machine of either OS was available — but they
-  shell out to each OS's own standard, stable tooling the same way the
-  Windows path's `netsh` call does, and degrade to empty/`UNAVAILABLE`
-  rather than erroring if a tool is missing or a platform variant isn't
-  recognized.
-- **The full binary** (networking + OS keychain) still hasn't compiled here
-  — `ring` (via `reqwest`) needs the C toolchain neither MSVC Build Tools nor
-  MinGW-w64 provide by default, and installing either is more than this
-  environment has room for. `http.rs`'s `checkin()` function and `main.rs`'s
-  `cmd_checkin()` are new, unverified glue code — written following the
-  exact same pattern as the already-verified `enroll`/`whoami` functions
-  (same signing helper, same request-building shape), but genuinely
-  untested. Compile the full binary yourself before relying on it.
+- **The full binary, fully live, no more caveats.** A real MinGW-w64
+  toolchain was installed, the entire binary (`reqwest`, `keyring`, every
+  dependency) compiled clean, and it was run as **separate OS processes**
+  against a real running Jupiter server backed by a real Postgres database:
+  `enroll` (redeemed a real single-use token, generated a keypair, persisted
+  it, called `whoami` in-process to confirm), then — critically, as a
+  **fresh process** — `whoami` again and `checkin`. The fresh-process step
+  is what matters: it's the only way to prove the private key actually
+  survived to disk/OS storage rather than just living in the enrolling
+  process's memory.
+- **That fresh-process step caught a real bug.** `keyring = "3"` with no
+  feature flags silently resolves to the crate's in-memory **mock**
+  backend on every platform — `set_secret`/`get_secret` both return `Ok`,
+  so a single-process test (like the old "enroll, which calls whoami
+  in-process" check) looks completely correct while persisting nothing.
+  The bug only showed up when `whoami` ran as a second process and got "no
+  device key found." Fixed by adding `features = ["windows-native",
+  "apple-native"]` to the `keyring` dependency in `Cargo.toml`. Re-verified
+  after the fix: fresh-process `whoami` succeeded, `cmdkey /list` showed a
+  real `LegacyGeneric:target=device-private-key.jupiter-agent` entry in
+  Windows Credential Manager, and `checkin` sent a real inventory snapshot
+  (14 software entries, 306 processes, 6 interfaces, firewall `ENABLED`)
+  that landed in Postgres correctly envelope-encrypted
+  (`iv`/`authTag`/`kmsKeyId`/`ciphertext`/`keyVersion`/`encryptedDataKey`
+  all present) and readable back through the server's decrypt path.
+  `apple-native` is the same class of fix for macOS but is unverified —
+  no Mac was available to test the actual Keychain write.
+- **Crypto core** (`src/crypto.rs`) — compiled and tested in isolation, and
+  a signature it produced was independently checked against the real,
+  unmodified server verification code and matched.
+- **Inventory collection** (`src/inventory/`) — the Windows collection path
+  ran live and produced real data (see above). The macOS and Linux
+  collection paths (`system_profiler`, `dpkg-query`/`rpm`,
+  `socketfilterfw`, `ufw`) were **not** run live — no machine of either OS
+  was available — but they shell out to each OS's own standard tooling the
+  same way the Windows path's `netsh` call does, and degrade to
+  empty/`UNAVAILABLE` rather than erroring if a tool is missing.
 
 ## Configuration & storage
 

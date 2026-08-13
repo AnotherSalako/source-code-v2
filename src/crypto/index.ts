@@ -5,10 +5,13 @@ import { LocalObjectStorage, ObjectStorage } from "./storage";
 import { SupabaseObjectStorage } from "./providers/supabase-storage";
 
 // Single shared instances, selected by KMS_PROVIDER — this is the ONLY place
-// in the app that constructs a KMS or storage client directly. Untested
-// against real AWS (no credentials available here); it's ordinary AWS SDK v3
-// usage, but verify it against your own account before trusting it with real
-// client data.
+// in the app that constructs a KMS or storage client directly. Live-verified
+// against a real AWS account: DescribeKey/GenerateDataKey/Decrypt all
+// succeed with the scoped IAM + key-policy grants documented in
+// providers/aws-kms.ts, and encryptField/decryptField round-trip correctly
+// through the real key. Requires both an IAM identity policy AND the key's
+// own resource policy to grant the principal access — missing either one
+// produces AccessDeniedException even though the other looks fine.
 function buildKmsProvider(): KmsProvider {
   if (env.kmsProvider === "aws") {
     const staticCredentials =

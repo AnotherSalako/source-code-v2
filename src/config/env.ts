@@ -27,7 +27,7 @@ export const env = {
   storageDir: process.env.STORAGE_DIR ?? "./storage",
   supabaseUrl: process.env.SUPABASE_URL,
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
-  supabaseStorageBucket: process.env.SUPABASE_STORAGE_BUCKET ?? "enforcer-evidence",
+  supabaseStorageBucket: process.env.SUPABASE_STORAGE_BUCKET ?? "jupiter-evidence",
 
   // Which KmsProvider src/crypto/index.ts constructs. "local" (default) is
   // the dev-only stand-in in src/crypto/kms.ts; "aws" uses a real KMS key via

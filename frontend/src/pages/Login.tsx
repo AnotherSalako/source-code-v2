@@ -25,13 +25,13 @@ export default function Login() {
         <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-ink text-paper">
           <Logomark />
         </span>
-        <h1 className="text-xl font-extrabold tracking-tight text-ink">Sign in to Enforcer</h1>
+        <h1 className="text-xl font-extrabold tracking-tight text-ink">Sign in to Jupiter</h1>
         <p className="mt-1.5 text-sm text-ink-faint">Encrypted assessment records, only for authorized accounts.</p>
       </div>
 
       {notProvisioned && (
         <p className="max-w-sm rounded-2xl bg-[color:var(--color-risk-critical)]/10 px-4 py-3 text-center text-sm text-[color:var(--color-risk-critical)]">
-          You're signed in, but this account isn't set up in Enforcer yet. Ask an administrator to add your email.
+          You're signed in, but this account isn't set up in Jupiter yet. Ask an administrator to add your email.
         </p>
       )}
 

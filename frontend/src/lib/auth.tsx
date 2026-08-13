@@ -10,7 +10,7 @@ interface AuthContextValue {
   // True when Clerk sign-in succeeded but no matching row exists in our own
   // User table (see src/middleware/auth.ts) — a real, distinct state from
   // "not signed in", since the person authenticated fine, they just haven't
-  // been given a role in Enforcer yet.
+  // been given a role in Jupiter yet.
   notProvisioned: boolean;
 }
 

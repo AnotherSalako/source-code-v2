@@ -6,7 +6,7 @@ vi.mock("../../src/modules/assets/verification", () => ({
   checkDnsTxt: vi.fn().mockResolvedValue(true),
   checkHttpFile: vi.fn().mockResolvedValue(true),
   generateVerificationToken: () => "test-token-123",
-  WELL_KNOWN_PATH: "/.well-known/enforcer-verification",
+  WELL_KNOWN_PATH: "/.well-known/jupiter-verification",
 }));
 
 const { createApp } = await import("../../src/app");

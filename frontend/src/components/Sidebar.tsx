@@ -77,7 +77,7 @@ export function Sidebar() {
         <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-ink text-paper">
           <Logomark />
         </span>
-        <span className="text-base font-extrabold tracking-tight">Enforcer</span>
+        <span className="text-base font-extrabold tracking-tight">Jupiter</span>
       </div>
 
       <nav className="flex flex-col gap-1">

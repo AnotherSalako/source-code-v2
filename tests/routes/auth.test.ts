@@ -14,7 +14,7 @@ describe("GET /auth/me", () => {
     await request(app).get("/auth/me").expect(401);
   });
 
-  it("403s for a Clerk-authenticated caller with no matching User row (signed in but not provisioned in Enforcer)", async () => {
+  it("403s for a Clerk-authenticated caller with no matching User row (signed in but not provisioned in Jupiter)", async () => {
     await request(app).get("/auth/me").set("x-test-user", "stranger@example.com").expect(403);
   });
 

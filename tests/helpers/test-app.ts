@@ -45,6 +45,10 @@ vi.mock("../../src/threat-response", () => ({
 }));
 vi.mock("../../src/modules/scanning/scan-runner", () => ({
   startScan: vi.fn().mockResolvedValue({ scanJobId: "scanjob_test", testId: "test_test" }),
+  isPrivateAddress: vi.fn().mockReturnValue(false),
+}));
+vi.mock("../../src/modules/discovery/discovery-runner", () => ({
+  startDiscovery: vi.fn().mockResolvedValue({ discoveryJobId: "discoveryjob_test" }),
 }));
 vi.mock("../../src/modules/findings/import.service", () => ({
   importScanItems: vi.fn().mockResolvedValue({ createdIds: [], skipped: [] }),
@@ -251,6 +255,34 @@ export interface FakeScanJobRow {
   rawResultEnc: unknown;
 }
 
+export interface FakeDiscoveryJobRow {
+  id: string;
+  engagementId: string;
+  assetId: string;
+  tool: string;
+  status: string;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  errorMessage: string | null;
+  discoveredCount: number | null;
+  createdAt: Date;
+}
+
+export interface FakeDiscoveredAssetRow {
+  id: string;
+  engagementId: string;
+  parentAssetId: string;
+  discoveryJobId: string;
+  valueEnc: unknown;
+  source: string;
+  openPorts: number[];
+  status: string;
+  promotedAssetId: string | null;
+  reviewedBy: string | null;
+  reviewedAt: Date | null;
+  createdAt: Date;
+}
+
 export interface FakeKeyRefRow {
   id: string;
   purpose: string;
@@ -286,6 +318,8 @@ const reportsById = new Map<string, FakeReportRow>();
 const retestsById = new Map<string, FakeRetestRow>();
 const trainingSessionsById = new Map<string, FakeTrainingSessionRow>();
 const scanJobsById = new Map<string, FakeScanJobRow>();
+const discoveryJobsById = new Map<string, FakeDiscoveryJobRow>();
+const discoveredAssetsById = new Map<string, FakeDiscoveredAssetRow>();
 const keyRefsById = new Map<string, FakeKeyRefRow>();
 const auditLogs: FakeAuditLogRow[] = [];
 
@@ -722,6 +756,82 @@ const prismaMock = {
         return { count: rows.length };
       }),
     },
+    discoveryJob: {
+      findUnique: vi.fn(async ({ where, include }: any) => {
+        const row = discoveryJobsById.get(where.id);
+        if (!row) return null;
+        if (include?.engagement) return { ...row, engagement: { clientId: engagementsById.get(row.engagementId)?.clientId } };
+        return row;
+      }),
+      findMany: vi.fn(async ({ where }: any) => [...discoveryJobsById.values()].filter((j) => matchWhereField(j.engagementId, where?.engagementId))),
+      findFirst: vi.fn(async ({ where }: any) => {
+        const statusIn = where?.status?.in as string[] | undefined;
+        return [...discoveryJobsById.values()].find((j) => j.assetId === where.assetId && (!statusIn || statusIn.includes(j.status))) ?? null;
+      }),
+      create: vi.fn(async ({ data }: any) => {
+        const row: FakeDiscoveryJobRow = {
+          id: nextId("discoveryjob"),
+          tool: "passive-discovery",
+          status: "QUEUED",
+          startedAt: null,
+          completedAt: null,
+          errorMessage: null,
+          discoveredCount: null,
+          createdAt: new Date(),
+          ...data,
+        };
+        discoveryJobsById.set(row.id, row);
+        return row;
+      }),
+      update: vi.fn(async ({ where, data }: any) => {
+        const row = discoveryJobsById.get(where.id)!;
+        Object.assign(row, data);
+        return row;
+      }),
+      deleteMany: vi.fn(async ({ where }: any) => {
+        const rows = [...discoveryJobsById.values()].filter((j) => matchWhereField(j.engagementId, where?.engagementId));
+        for (const j of rows) discoveryJobsById.delete(j.id);
+        return { count: rows.length };
+      }),
+    },
+    discoveredAsset: {
+      findUnique: vi.fn(async ({ where, include }: any) => {
+        const row = discoveredAssetsById.get(where.id);
+        if (!row) return null;
+        if (include?.engagement) return { ...row, engagement: { clientId: engagementsById.get(row.engagementId)?.clientId } };
+        return row;
+      }),
+      findMany: vi.fn(async ({ where }: any) => {
+        let all = [...discoveredAssetsById.values()];
+        if (where?.engagementId) all = all.filter((d) => matchWhereField(d.engagementId, where.engagementId));
+        if (where?.parentAssetId) all = all.filter((d) => matchWhereField(d.parentAssetId, where.parentAssetId));
+        return all;
+      }),
+      create: vi.fn(async ({ data }: any) => {
+        const row: FakeDiscoveredAssetRow = {
+          id: nextId("discoveredasset"),
+          openPorts: [],
+          status: "NEW",
+          promotedAssetId: null,
+          reviewedBy: null,
+          reviewedAt: null,
+          createdAt: new Date(),
+          ...data,
+        };
+        discoveredAssetsById.set(row.id, row);
+        return row;
+      }),
+      update: vi.fn(async ({ where, data }: any) => {
+        const row = discoveredAssetsById.get(where.id)!;
+        Object.assign(row, data);
+        return row;
+      }),
+      deleteMany: vi.fn(async ({ where }: any) => {
+        const rows = [...discoveredAssetsById.values()].filter((d) => matchWhereField(d.engagementId, where?.engagementId));
+        for (const d of rows) discoveredAssetsById.delete(d.id);
+        return { count: rows.length };
+      }),
+    },
     keyRef: {
       create: vi.fn(async ({ data }: any) => {
         const row: FakeKeyRefRow = { id: nextId("keyref"), status: "ACTIVE", createdAt: new Date(), retiredAt: null, ...data };
@@ -932,6 +1042,41 @@ export function seedScanJob(row: Partial<FakeScanJobRow> & { id: string; engagem
   return full;
 }
 
+export function seedDiscoveryJob(
+  row: Partial<FakeDiscoveryJobRow> & { id: string; engagementId: string; assetId: string }
+): FakeDiscoveryJobRow {
+  const full: FakeDiscoveryJobRow = {
+    tool: "passive-discovery",
+    status: "QUEUED",
+    startedAt: null,
+    completedAt: null,
+    errorMessage: null,
+    discoveredCount: null,
+    createdAt: new Date(),
+    ...row,
+  };
+  discoveryJobsById.set(full.id, full);
+  return full;
+}
+
+export function seedDiscoveredAsset(
+  row: Partial<FakeDiscoveredAssetRow> & { id: string; engagementId: string; parentAssetId: string; discoveryJobId: string }
+): FakeDiscoveredAssetRow {
+  const full: FakeDiscoveredAssetRow = {
+    valueEnc: null,
+    source: "crt.sh",
+    openPorts: [],
+    status: "NEW",
+    promotedAssetId: null,
+    reviewedBy: null,
+    reviewedAt: null,
+    createdAt: new Date(),
+    ...row,
+  };
+  discoveredAssetsById.set(full.id, full);
+  return full;
+}
+
 /** Wipes all fake data between tests so one test's seed data can't leak into another. */
 export function resetFakeDb(): void {
   usersByEmail.clear();
@@ -946,6 +1091,8 @@ export function resetFakeDb(): void {
   retestsById.clear();
   trainingSessionsById.clear();
   scanJobsById.clear();
+  discoveryJobsById.clear();
+  discoveredAssetsById.clear();
   keyRefsById.clear();
   auditLogs.length = 0;
 }

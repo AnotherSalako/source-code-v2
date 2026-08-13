@@ -1,10 +1,42 @@
-# Enforcer — architecture blueprint
+# Jupiter — architecture blueprint
 
-This is the reusable part of Enforcer: the patterns and scaffolding that
-exist independent of "cybersecurity assessment platform" as a domain. If
-you're building a different system that needs the same shape — real
-customer data, encrypted at rest, role-scoped access, an audit trail, and
-a defensible security story — this is what to copy and what to swap.
+Jupiter is a fork of [Enforcer](https://github.com/AnotherSalako/Enforcer),
+rebranded and extended into a broader cybersecurity assessment platform —
+same foundation, growing beyond Enforcer's original one-time-assessment
+scope (see "What's new in Jupiter" below). Enforcer itself continues to
+exist unmodified as its own project.
+
+This doc covers the reusable part inherited from that fork: the patterns
+and scaffolding that exist independent of "cybersecurity assessment
+platform" as a domain. If you're building a different system that needs
+the same shape — real customer data, encrypted at rest, role-scoped
+access, an audit trail, and a defensible security story — this is what to
+copy and what to swap.
+
+## What's new in Jupiter
+
+**Attack surface management / continuous discovery** — Enforcer scanned
+assets a client already told it about; Jupiter also finds ones they didn't
+(`src/modules/discovery`, see README "Attack surface discovery"). A
+`VERIFIED` root asset can trigger a passive discovery run: certificate-
+transparency lookup for subdomains, a liveness check, and a connect-only
+probe against a short well-known port list on whatever's live. Results land
+as `DiscoveredAsset` rows — never directly as scannable `Asset`s — for a
+human to promote or ignore. This is the same shape as every other
+capability in this codebase: automated *finding*, human-gated *acting*.
+Promoting a discovered subdomain doesn't skip ownership verification; it
+just means there's now something to verify.
+
+This was chosen as the first addition (over cloud-misconfiguration
+scanning, SBOM/dependency scanning, ticketing integration, attack-path
+visualization, and AI-assisted triage — all considered, all deferred) because
+it extends code that already existed rather than introducing a new
+subsystem: it reuses the exact ownership-verification gate scanning
+depends on, and its jobs follow the same `QUEUED → RUNNING → COMPLETE/FAILED`
+lifecycle, orphan-sweep-on-restart, and dedup-in-application-code patterns
+`ScanJob` already established. Everything else on that list is still worth
+building — see "The actual gap in 'blueprint' as a business model" below,
+which applies to feature scope as much as it applies to deployment tooling.
 
 ## What stays the same across a rebuild
 
@@ -60,7 +92,7 @@ an entire org's data graph in FK-dependency order, then best-effort purges
 the associated object-storage files, while leaving the audit trail intact.
 This exists because "how do we let a customer actually delete their data"
 is a real requirement for anything handling other people's data, not an
-Enforcer-specific concern — the pattern (collect the graph, delete
+Jupiter-specific concern — the pattern (collect the graph, delete
 children-before-parents in one transaction, purge files after, log the
 erasure itself) is the reusable part.
 

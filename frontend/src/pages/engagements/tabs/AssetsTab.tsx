@@ -358,7 +358,7 @@ function VerifyPanel({
     <div className="flex flex-col gap-4 rounded-2xl border border-dashed border-line p-4">
       <p className="text-sm text-ink-soft">
         Prove control of <span className="font-mono text-ink">{asset.identifier}</span> before this asset can be
-        automatically scanned — otherwise "scan this URL" would let anyone point Enforcer at a site they don't own.
+        automatically scanned — otherwise "scan this URL" would let anyone point Jupiter at a site they don't own.
       </p>
 
       {!instructions ? (

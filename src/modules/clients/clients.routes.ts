@@ -211,7 +211,7 @@ clientsRouter.delete("/:id", requireAuth, sideEffectLimiter, async (req, res) =>
       resourceId: client.id,
       result: "DENIED",
     });
-    res.status(403).json({ error: "Only an account executive or Enforcer staff can request account data deletion" });
+    res.status(403).json({ error: "Only an account executive or Jupiter staff can request account data deletion" });
     return;
   }
 

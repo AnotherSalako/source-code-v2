@@ -62,7 +62,7 @@ export function DeleteClientSection({ client }: { client: Client }) {
       <p className="mt-1 max-w-xl text-sm text-ink-faint">
         Erases every engagement, asset, finding, evidence file, report, compliance check, and training session for this
         client, plus every user account scoped to this org — including yours, if you're a client-side user. This cannot
-        be undone. Enforcer's own accountability audit log is kept, as required for our records.
+        be undone. Jupiter's own accountability audit log is kept, as required for our records.
       </p>
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
         <label className="flex flex-1 flex-col gap-1.5 text-sm">

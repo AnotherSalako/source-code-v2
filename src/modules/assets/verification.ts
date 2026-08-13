@@ -1,8 +1,8 @@
 import { randomBytes } from "crypto";
 import dns from "dns/promises";
 
-export const VERIFICATION_TOKEN_PREFIX = "enforcer-verify";
-export const WELL_KNOWN_PATH = "/.well-known/enforcer-verification.txt";
+export const VERIFICATION_TOKEN_PREFIX = "jupiter-verify";
+export const WELL_KNOWN_PATH = "/.well-known/jupiter-verification.txt";
 
 export function generateVerificationToken(): string {
   return `${VERIFICATION_TOKEN_PREFIX}=${randomBytes(16).toString("hex")}`;
@@ -20,7 +20,7 @@ export async function checkDnsTxt(hostname: string, token: string): Promise<bool
 }
 
 /**
- * `http(s)://<host>/.well-known/enforcer-verification.txt` must return the
+ * `http(s)://<host>/.well-known/jupiter-verification.txt` must return the
  * token as its exact (trimmed) body. A short timeout and a hard byte cap
  * keep this from ever being used as a slow-loris or arbitrary-download
  * vector against whatever the client points us at.

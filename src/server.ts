@@ -34,12 +34,26 @@ async function failOrphanedScanJobs(): Promise<void> {
   if (count > 0) logger.warn({ count }, "Marked orphaned scan job(s) as FAILED on startup");
 }
 
+// Same failure mode as failOrphanedScanJobs above, same fix — a DiscoveryJob
+// is only ever advanced by this process (discovery-runner.ts), so a restart
+// mid-run would otherwise leave it RUNNING forever and permanently block
+// re-running discovery on that asset (discovery.routes.ts refuses a second
+// run while one is "in progress").
+async function failOrphanedDiscoveryJobs(): Promise<void> {
+  const { count } = await prisma.discoveryJob.updateMany({
+    where: { status: { in: ["QUEUED", "RUNNING"] } },
+    data: { status: "FAILED", completedAt: new Date(), errorMessage: "Interrupted by a server restart" },
+  });
+  if (count > 0) logger.warn({ count }, "Marked orphaned discovery job(s) as FAILED on startup");
+}
+
 const app = createApp();
 
-failOrphanedScanJobs()
-  .catch((err) => logger.error({ err }, "Failed to sweep orphaned scan jobs on startup"))
-  .finally(() => {
-    app.listen(env.port, () => {
-      logger.info(`Enforcer API listening on port ${env.port}`);
-    });
+Promise.all([
+  failOrphanedScanJobs().catch((err) => logger.error({ err }, "Failed to sweep orphaned scan jobs on startup")),
+  failOrphanedDiscoveryJobs().catch((err) => logger.error({ err }, "Failed to sweep orphaned discovery jobs on startup")),
+]).finally(() => {
+  app.listen(env.port, () => {
+    logger.info(`Jupiter API listening on port ${env.port}`);
   });
+});

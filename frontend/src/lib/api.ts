@@ -1,6 +1,6 @@
 // Local dev: unset, so requests hit "/api/..." and the Vite dev proxy
 // (vite.config.ts) forwards to localhost:4000. Production (Vercel): set to
-// the deployed backend project's URL, e.g. https://enforcer-api.vercel.app —
+// the deployed backend project's URL, e.g. https://jupiter-api.vercel.app —
 // there's no dev proxy in a static production build.
 const API_BASE = import.meta.env.VITE_API_URL ?? "/api";
 

@@ -25,7 +25,10 @@ const MAX_RUNTIME_MS = 5 * 60 * 1000;
 // higher — and roughly halves that without changing what's being sent.
 const REQUEST_RATE_LIMIT = "60"; // requests/sec, passed to nuclei -rl
 
-function isPrivateAddress(ip: string): boolean {
+// Exported for reuse by discovery-runner.ts — a discovered subdomain that
+// resolves internally gets the exact same "don't touch it automatically"
+// treatment a manually-declared asset does.
+export function isPrivateAddress(ip: string): boolean {
   if (ip === "127.0.0.1" || ip === "::1") return true;
   if (/^10\./.test(ip)) return true;
   if (/^192\.168\./.test(ip)) return true;
@@ -157,7 +160,7 @@ export async function runScanJob(scanJobId: string): Promise<void> {
 
     await prisma.scanJob.update({ where: { id: scanJobId }, data: { status: "RUNNING", startedAt: new Date() } });
 
-    const outFile = path.join(os.tmpdir(), `enforcer-scan-${scanJobId}.jsonl`);
+    const outFile = path.join(os.tmpdir(), `jupiter-scan-${scanJobId}.jsonl`);
     await runNuclei(url.toString(), outFile);
 
     const raw = await fs.readFile(outFile, "utf8").catch(() => "");

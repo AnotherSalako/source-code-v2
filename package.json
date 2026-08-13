@@ -1,7 +1,7 @@
 {
-  "name": "enforcer",
+  "name": "jupiter",
   "version": "0.1.0",
-  "description": "One-time cybersecurity assessment platform with AES-256 encrypted findings, evidence, and reports.",
+  "description": "Cybersecurity assessment platform with AES-256 encrypted findings, evidence, and reports, plus passive attack-surface discovery.",
   "private": true,
   "main": "dist/server.js",
   "scripts": {

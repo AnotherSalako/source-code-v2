@@ -1,0 +1,168 @@
+import dns from "dns/promises";
+import net from "net";
+import { prisma } from "../../db/prisma";
+import { kms } from "../../crypto";
+import { decryptField, encryptField } from "../../crypto/envelope";
+import { logger } from "../../config/logger";
+import { isPrivateAddress } from "../scanning/scan-runner";
+
+// Deliberately passive/non-intrusive, same posture as the Nuclei tag set in
+// scan-runner.ts: certificate-transparency logs surface subdomain
+// candidates (no request ever reaches the target for that part), and
+// nothing more aggressive than a plain TCP connect against a handful of
+// well-known ports runs against whatever currently resolves publicly — no
+// hostname brute forcing, no banner grabs, no exploitation. Anything past
+// that is a manual pentest activity, same line scan-runner.ts already draws.
+// Results never become scannable Assets on their own — they land as
+// DiscoveredAsset rows a human reviews and promotes (see discovery.routes.ts).
+const CT_LOOKUP_TIMEOUT_MS = 15_000;
+const MAX_RUNTIME_MS = 3 * 60 * 1000;
+const MAX_CANDIDATES = 50; // crt.sh can return thousands of historical certs for a big domain; cap what one run processes
+const PORT_CHECK_TIMEOUT_MS = 1500;
+const COMMON_PORTS = [21, 22, 25, 80, 443, 3389, 8080, 8443];
+
+function stripWildcard(host: string): string {
+  return host.replace(/^\*\./, "").trim().toLowerCase();
+}
+
+function bareHostname(identifier: string): string {
+  return identifier.includes("://") ? new URL(identifier).hostname : identifier.split("/")[0];
+}
+
+async function queryCertTransparency(domain: string): Promise<string[]> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CT_LOOKUP_TIMEOUT_MS);
+  try {
+    const res = await fetch(`https://crt.sh/?q=%25.${encodeURIComponent(domain)}&output=json`, { signal: controller.signal });
+    if (!res.ok) return [];
+    const rows = (await res.json()) as { name_value?: string }[];
+    const names = new Set<string>();
+    for (const row of rows) {
+      for (const raw of (row.name_value ?? "").split("\n")) {
+        const host = stripWildcard(raw);
+        if (host && host !== domain && host.endsWith(`.${domain}`) && !host.includes(" ")) names.add(host);
+      }
+    }
+    return [...names];
+  } catch (err) {
+    logger.warn({ err, domain }, "Certificate-transparency lookup failed — continuing with an empty candidate set");
+    return [];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/** Returns the resolved address, or null if the hostname no longer resolves — stale CT entries are dropped, not reported. */
+async function resolveLive(hostname: string): Promise<string | null> {
+  try {
+    const { address } = await dns.lookup(hostname);
+    return address;
+  } catch {
+    return null;
+  }
+}
+
+function checkPort(hostname: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: hostname, port, timeout: PORT_CHECK_TIMEOUT_MS });
+    const done = (open: boolean) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(open);
+    };
+    socket.once("connect", () => done(true));
+    socket.once("timeout", () => done(false));
+    socket.once("error", () => done(false));
+  });
+}
+
+/** Connect-only check (no banner read) against a small, fixed port list — never anything resembling a full port sweep. */
+async function checkOpenPorts(hostname: string): Promise<number[]> {
+  const results = await Promise.all(COMMON_PORTS.map(async (port) => ((await checkPort(hostname, port)) ? port : null)));
+  return results.filter((p): p is number => p !== null);
+}
+
+export async function startDiscovery(params: {
+  engagementId: string;
+  assetId: string;
+  triggeredById: string;
+}): Promise<{ discoveryJobId: string }> {
+  const job = await prisma.discoveryJob.create({
+    data: {
+      engagementId: params.engagementId,
+      assetId: params.assetId,
+      status: "QUEUED",
+      triggeredById: params.triggeredById,
+    },
+  });
+
+  // Fire and forget, same reasoning as startScan in scan-runner.ts: the
+  // caller polls GET .../discovery-jobs/:id rather than waiting on this
+  // request, and this process must stay alive for the run's duration.
+  void runDiscoveryJob(job.id);
+
+  return { discoveryJobId: job.id };
+}
+
+/** Runs one discovery job end to end. Never throws — every failure mode ends in a FAILED job with errorMessage set. */
+export async function runDiscoveryJob(discoveryJobId: string): Promise<void> {
+  const job = await prisma.discoveryJob.findUniqueOrThrow({ where: { id: discoveryJobId }, include: { asset: true } });
+
+  try {
+    await prisma.discoveryJob.update({ where: { id: discoveryJobId }, data: { status: "RUNNING", startedAt: new Date() } });
+
+    const identifier = await decryptField(kms, job.asset.identifierEnc as any, `asset:identifier`);
+    const rootDomain = bareHostname(identifier);
+
+    const candidates = (await queryCertTransparency(rootDomain)).slice(0, MAX_CANDIDATES);
+
+    // Dedup against everything already discovered under this asset — a
+    // re-run shouldn't re-surface the same subdomain as a fresh NEW row
+    // every time. Ciphertext can't be compared directly, so this decrypts
+    // and compares in application code, same approach import.service.ts
+    // uses for finding dedup.
+    const existingRows = await prisma.discoveredAsset.findMany({
+      where: { parentAssetId: job.assetId },
+      select: { valueEnc: true },
+    });
+    const existingValues = new Set(
+      await Promise.all(existingRows.map((row) => decryptField(kms, row.valueEnc as any, `discoveredAsset:value`)))
+    );
+
+    const deadline = Date.now() + MAX_RUNTIME_MS;
+    let discoveredCount = 0;
+
+    for (const hostname of candidates) {
+      if (Date.now() > deadline) break; // leave the rest for the next run rather than running unbounded
+      if (existingValues.has(hostname)) continue;
+
+      const address = await resolveLive(hostname);
+      if (!address) continue; // no longer resolves — not part of the live attack surface today
+
+      const openPorts = isPrivateAddress(address) ? [] : await checkOpenPorts(hostname);
+
+      await prisma.discoveredAsset.create({
+        data: {
+          engagementId: job.engagementId,
+          parentAssetId: job.assetId,
+          discoveryJobId: job.id,
+          valueEnc: (await encryptField(kms, hostname, `discoveredAsset:value`)) as any,
+          source: "crt.sh",
+          openPorts,
+        },
+      });
+      discoveredCount++;
+    }
+
+    await prisma.discoveryJob.update({
+      where: { id: discoveryJobId },
+      data: { status: "COMPLETE", completedAt: new Date(), discoveredCount },
+    });
+  } catch (err) {
+    logger.error({ err, discoveryJobId }, "Discovery job failed");
+    await prisma.discoveryJob.update({
+      where: { id: discoveryJobId },
+      data: { status: "FAILED", completedAt: new Date(), errorMessage: err instanceof Error ? err.message : String(err) },
+    });
+  }
+}

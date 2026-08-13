@@ -30,7 +30,7 @@ export default function Team() {
   useEffect(reload, []);
 
   async function handleRemove(member: TeamMember) {
-    if (!confirm(`Remove ${member.name} (${member.email})? They'll lose access to Enforcer immediately.`)) return;
+    if (!confirm(`Remove ${member.name} (${member.email})? They'll lose access to Jupiter immediately.`)) return;
     await api.delete(`/users/${member.id}`);
     reload();
   }

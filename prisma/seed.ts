@@ -4,7 +4,7 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 // Clerk requires a real, verifiable email to sign up with — the old
-// "admin@enforcer.local" fake demo address can't actually be used to create
+// "admin@jupiter.local" fake demo address can't actually be used to create
 // a Clerk account. This seeds a User row (role/orgId — our authorization
 // data) keyed to a real email; sign up in Clerk with that same email and
 // requireAuth (src/middleware/auth.ts) will resolve you to this row.

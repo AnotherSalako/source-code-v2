@@ -1,13 +1,13 @@
-# Welcome to Enforcer
+# Welcome to Jupiter
 
-This is a short guide for your team — what Enforcer is, what you'll see
+This is a short guide for your team — what Jupiter is, what you'll see
 when you log in, and who on your side should be looking at what. It's not
 a technical manual; it's meant to be handed to whoever on the client side
 will actually use the platform.
 
-## What Enforcer is
+## What Jupiter is
 
-Enforcer is where your security assessment lives while it's happening —
+Jupiter is where your security assessment lives while it's happening —
 not a report you get once at the end, but a live system you can check in
 on at any point: what's been tested, what's been found, what's being
 fixed, and where things stand right now.
@@ -26,7 +26,7 @@ minutes.
 
 ## Who sees what
 
-Enforcer has two kinds of accounts on the client side, and what you see
+Jupiter has two kinds of accounts on the client side, and what you see
 depends on which one you have:
 
 - **Executive** — a business-level view. You'll see the overall status of

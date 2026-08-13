@@ -54,7 +54,7 @@ export class ResendNotificationProvider implements NotificationProvider {
       body: JSON.stringify({
         from: this.from,
         to: this.to,
-        subject: `Enforcer scan sweep — ${h.startedCount} started, ${h.skippedCount} skipped`,
+        subject: `Jupiter scan sweep — ${h.startedCount} started, ${h.skippedCount} skipped`,
         html:
           `<p style="color:#666;font-size:13px">Scheduled scan sweep ran at ${h.timestamp.toISOString()}.</p>` +
           `<p>${h.eligibleCount} asset(s) eligible · ${h.startedCount} scan(s) started · ${h.skippedCount} skipped.</p>`,

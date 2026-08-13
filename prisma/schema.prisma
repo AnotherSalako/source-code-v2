@@ -1,4 +1,4 @@
-// Enforcer — one-time cybersecurity assessment platform
+// Jupiter — one-time cybersecurity assessment platform
 // Data model mirrors the design doc. Fields suffixed `Enc` hold an
 // EncryptedField JSON blob (ciphertext/iv/authTag/encryptedDataKey/keyId/keyVersion)
 // produced by src/crypto/envelope.ts — never plaintext.
@@ -172,6 +172,12 @@ enum ScanJobStatus {
   FAILED
 }
 
+enum DiscoveredAssetStatus {
+  NEW      // surfaced by a discovery run, not yet reviewed
+  PROMOTED // a human turned it into a real Asset (still UNVERIFIED until it passes ownership verification separately)
+  IGNORED  // a human reviewed it and chose not to act on it
+}
+
 enum MalwareStatus {
   PENDING     // check not run yet (or still in flight)
   CLEAN       // VirusTotal has analyzed this hash/URL and no engine flagged it
@@ -258,6 +264,8 @@ model Engagement {
   reports          Report[]
   trainingSessions TrainingSession[]
   scanJobs         ScanJob[]
+  discoveryJobs    DiscoveryJob[]
+  discoveredAssets DiscoveredAsset[]
 
   @@index([clientId])
 }
@@ -285,9 +293,11 @@ model Asset {
   verifiedAt         DateTime?
   verifiedBy         String? // User.id who confirmed it (the admin who ran the check, or approved the manual override)
 
-  tests    Test[]
-  findings Finding[]
-  scanJobs ScanJob[]
+  tests            Test[]
+  findings         Finding[]
+  scanJobs         ScanJob[]
+  discoveryJobs    DiscoveryJob[]    // discovery runs launched from this (VERIFIED) asset
+  discoveredAssets DiscoveredAsset[] // candidates surfaced under this asset, pending review
 
   @@index([engagementId])
 }
@@ -341,6 +351,67 @@ model ScanJob {
 
   @@index([engagementId])
   @@index([assetId])
+  @@index([status])
+}
+
+// One run of attack-surface discovery (POST .../assets/:assetId/discover)
+// against a single, already-VERIFIED root asset — same ownership gate
+// scanning uses, for the same reason: querying certificate-transparency
+// logs and connect-probing whatever resolves is still directed at a target,
+// and "prove you control it first" is what keeps that from being an open
+// abuse primitive. Deliberately passive/non-intrusive: a CT-log lookup plus
+// a connect-only check against a small well-known port list, no brute
+// forcing of hostnames and no exploitation. Results land as DiscoveredAsset
+// rows for a human to review — never auto-promoted into scannable Assets,
+// mirroring the human-gated pattern used everywhere else in this codebase.
+model DiscoveryJob {
+  id              String        @id @default(uuid())
+  engagementId    String
+  engagement      Engagement    @relation(fields: [engagementId], references: [id])
+  assetId         String
+  asset           Asset         @relation(fields: [assetId], references: [id])
+  tool            String        @default("passive-discovery")
+  status          ScanJobStatus @default(QUEUED) // same lifecycle as ScanJob — reused rather than duplicated
+  triggeredById   String
+  startedAt       DateTime?
+  completedAt     DateTime?
+  errorMessage    String?
+  discoveredCount Int?
+  createdAt       DateTime      @default(now())
+
+  discoveredAssets DiscoveredAsset[]
+
+  @@index([engagementId])
+  @@index([assetId])
+  @@index([status])
+}
+
+// A candidate asset a DiscoveryJob surfaced (subdomain, plus which of a
+// small common-port list answered a plain TCP connect) — not a real Asset
+// until a human promotes it. `valueEnc` follows the same EncryptedField
+// convention as Asset.identifierEnc; dedup against previously-discovered
+// values happens in application code (src/modules/discovery), same as
+// finding-dedup in src/modules/findings/import.service.ts, since ciphertext
+// can't be compared/uniqued directly.
+model DiscoveredAsset {
+  id              String                @id @default(uuid())
+  engagementId    String
+  engagement      Engagement            @relation(fields: [engagementId], references: [id])
+  parentAssetId   String
+  parentAsset     Asset                 @relation(fields: [parentAssetId], references: [id])
+  discoveryJobId  String
+  discoveryJob    DiscoveryJob          @relation(fields: [discoveryJobId], references: [id])
+  valueEnc        Json // EncryptedField — discovered hostname
+  source          String // e.g. "crt.sh"
+  openPorts       Int[]                 @default([])
+  status          DiscoveredAssetStatus @default(NEW)
+  promotedAssetId String? // Asset.id created on promote — plain string, no relation, same convention as Asset.verifiedBy/ScanJob.triggeredById
+  reviewedBy      String?
+  reviewedAt      DateTime?
+  createdAt       DateTime              @default(now())
+
+  @@index([engagementId])
+  @@index([parentAssetId])
   @@index([status])
 }
 

@@ -52,7 +52,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
-    res.status(403).json({ error: "This account isn't provisioned in Enforcer yet — ask an administrator to add you." });
+    res.status(403).json({ error: "This account isn't provisioned in Jupiter yet — ask an administrator to add you." });
     return;
   }
 

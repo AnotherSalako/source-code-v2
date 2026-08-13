@@ -1,4 +1,4 @@
-# Enforcer
+# Jupiter
 
 A one-time cybersecurity assessment platform: discovery/scoping, vulnerability
 assessment (manual or bulk-imported from scanner output), authorized
@@ -25,7 +25,7 @@ side should be looking at what.
 - PostgreSQL via Prisma, hosted on Supabase (project "demi", ref `rwrkimrznijzxcuaudbd`)
 - AES-256-GCM envelope encryption (`src/crypto`), with a swappable KMS boundary —
   `LocalKmsProvider` (dev) or a real `AwsKmsProvider`, selected via `KMS_PROVIDER`
-- Encrypted evidence/report files in a private Supabase Storage bucket (`enforcer-evidence`) by default, swappable for local disk or S3/GCS/Azure Blob
+- Encrypted evidence/report files in a private Supabase Storage bucket (`jupiter-evidence`) by default, swappable for local disk or S3/GCS/Azure Blob
 - Clerk for identity/credentials/MFA/sessions; this app's own `User` table for authorization (role, org) — see "Authentication" below
 - Role-based access control, append-only audit log
 - Configurable CORS allowlist, structured JSON logging (`pino`)
@@ -79,7 +79,7 @@ exact same email** you passed as `SEED_ADMIN_EMAIL`; `requireAuth`
 email. See "Authentication" below.
 
 Migration history is baselined (`_prisma_migrations` exists and
-`20260806000000_init_enforcer_schema`, `20260806170000_add_mfa_secret`,
+`20260806000000_init_jupiter_schema`, `20260806170000_add_mfa_secret`,
 `20260806190000_roadmap_compliance_training`, and
 `20260806210000_clerk_auth_drop_password_mfa` are all recorded as applied).
 **`prisma migrate dev`/`deploy` hang indefinitely
@@ -199,7 +199,7 @@ Two layers, both real, both live-verified against the actual Clerk project
    wraps this for `security_admin` accounts, linked from the sidebar.
 
 **Why not Clerk Organizations** (the more commonly-suggested pattern for
-this): Enforcer's own `User.role` already answers "what can this person
+this): Jupiter's own `User.role` already answers "what can this person
 do" — Organizations would only add "can this person get in at all," which
 Clerk's Restricted/allowlist mode already answers without introducing a
 second membership system that could drift out of sync with the first. One
@@ -281,7 +281,7 @@ because there's nothing to hand-maintain.
 
 Identity, credentials, MFA, and sessions are handled entirely by
 [Clerk](https://clerk.com) — this app no longer stores a password or a TOTP
-secret for anyone. Enforcer's own Postgres only keeps the authorization side:
+secret for anyone. Jupiter's own Postgres only keeps the authorization side:
 a `User` row (`name`, `email`, `role`, `orgId`) that a Clerk-verified request
 gets resolved to.
 
@@ -295,7 +295,7 @@ gets resolved to.
   RBAC/org-scoping code needed to change. If no `User` row matches the email,
   the request is rejected with `403` and a "not provisioned" message rather
   than being treated as unauthenticated — the person proved who they are to
-  Clerk, they just haven't been added to Enforcer yet.
+  Clerk, they just haven't been added to Jupiter yet.
 - **Frontend** — `<ClerkProvider>` wraps the app (`frontend/src/main.tsx`);
   `/login` renders Clerk's own `<SignIn>` component (handles password, MFA
   enrollment/challenge, session refresh — all in Clerk's UI, not ours).
@@ -470,7 +470,7 @@ JSONL separately. Two things have to be true before that's allowed:
    - `POST .../assets/:id/verification/start` (`{ method: "DNS_TXT" |
      "HTTP_FILE" }`) generates a random token and returns exactly what to
      publish (a DNS TXT record, or a file at
-     `/.well-known/enforcer-verification.txt`).
+     `/.well-known/jupiter-verification.txt`).
    - `POST .../assets/:id/verification/check` does the actual lookup
      (`dns.resolveTxt` / a capped, timeout-bound `fetch`) and flips the
      asset to `VERIFIED` only on an exact match.
@@ -531,6 +531,71 @@ check (token published to a live server, fetched and matched over the
 network, not mocked), and a separate asset's full scan pipeline — trigger,
 spawn, `ScanJob` status transitions, dedup-aware import, completion — was
 run against a real target with real Nuclei output.
+
+## Attack surface discovery
+
+Jupiter's first addition beyond Enforcer's original scope: finding assets a
+client didn't know to declare, not just scanning the ones they did. Same
+non-intrusive, human-gated posture as "Website scanning" above, extended one
+step earlier in the pipeline.
+
+`POST /engagements/:id/assets/:assetId/discover` (`src/modules/discovery`)
+only runs against an asset that's already `VERIFIED` — the exact same
+ownership gate scanning uses, for the same reason: querying certificate-
+transparency logs and probing whatever resolves is still directed at a
+target, so proving control of the root domain first is what keeps this from
+being an open abuse primitive against any domain on the internet. It also
+requires the engagement's signed authorization and an in-scope `WEB`/`API`
+asset, same as scanning.
+
+What a discovery run actually does, in order:
+
+1. **Certificate-transparency lookup.** Queries `crt.sh` for every
+   certificate ever issued for `*.<root-domain>` — a purely passive OSINT
+   step; no request ever reaches the target itself. This is how it finds
+   subdomains nobody remembered to declare (forgotten staging environments,
+   old marketing microsites, etc.).
+2. **Liveness check.** A plain DNS lookup on each candidate — anything that
+   no longer resolves is dropped, not reported, so the review queue reflects
+   today's attack surface, not certificate history.
+3. **Port check.** For whatever's live and resolves publicly, a connect-only
+   TCP check (no banner grab) against eight well-known ports
+   (21/22/25/80/443/3389/8080/8443) — never anything resembling a full port
+   sweep. A host that resolves to a private/internal address is recorded
+   with no ports checked at all, same `isPrivateAddress` guard scanning uses.
+
+Results land as `DiscoveredAsset` rows, **never** directly as scannable
+`Asset`s — a human reviews the queue (`GET .../discovered-assets`) and
+either:
+
+- `POST /discovered-assets/:id/promote` — creates a real `Asset`, but it
+  starts `UNVERIFIED`. Promotion only ever expands what's *tracked*; the new
+  asset still has to pass the same DNS/HTTP ownership verification as
+  anything manually added before it's ever scannable. Discovering a
+  subdomain is not proof of controlling it.
+- `POST /discovered-assets/:id/ignore` — dismisses it, logged like every
+  other reviewed action.
+
+Safety constraints, all enforced server-side:
+
+- **Passive-first.** The only step that touches a discovered host at all is
+  a connect-only port check — no banner reads, no HTTP requests, no
+  brute-forcing of hostnames.
+- **Time- and volume-boxed.** Capped at 50 CT-log candidates per run
+  (`MAX_CANDIDATES`) and a 3-minute runtime ceiling — leftover candidates
+  are picked up on the next run rather than the job running unbounded.
+- **One run at a time per asset**, and **dedup against prior runs** — a
+  re-run doesn't re-surface the same subdomain as a fresh row every time
+  (ciphertext can't be uniqued at the DB level, so this decrypts and
+  compares in application code, same approach `import.service.ts` uses for
+  finding dedup).
+- **Self-healing on restart**, same as scanning — `failOrphanedDiscoveryJobs()`
+  (`src/server.ts`) sweeps any stuck `QUEUED`/`RUNNING` job to `FAILED` at boot.
+
+**Deployment note:** same constraint as scanning — this needs a
+long-running process (DNS lookups and TCP connects don't complete inside a
+single serverless invocation reliably), so it's **not usable on Vercel's
+serverless runtime** on its own. Run it wherever "Website scanning" runs.
 
 ## Scheduled scanning
 
@@ -750,6 +815,11 @@ POST   /engagements/:id/assets/:id/verification/manual  (security_admin; { justi
 POST   /engagements/:id/assets/:id/scan      (security_admin; requires VERIFIED + authorization; 202, async)
 GET    /engagements/:id/scan-jobs
 GET    /scan-jobs/:id                        (rawResult only for security_admin)
+POST   /engagements/:id/assets/:id/discover  (security_admin; requires VERIFIED + authorization; 202, async — see "Attack surface discovery")
+GET    /engagements/:id/discovery-jobs
+GET    /engagements/:id/discovered-assets    (decrypted; the review queue)
+POST   /discovered-assets/:id/promote        (security_admin; NEW only; creates an UNVERIFIED Asset)
+POST   /discovered-assets/:id/ignore         (security_admin; NEW only)
 POST   /engagements/:id/tests                (security_admin; requires authorization)
 GET    /engagements/:id/tests
 PATCH  /engagements/:id/tests/:testId        (security_admin)
@@ -796,7 +866,7 @@ data is untouched and it can be resumed anytime from the Supabase dashboard.
   blocks Supabase's `anon`/`authenticated` REST API roles entirely; it does
   not affect this app, which connects directly via `DATABASE_URL` (a role
   that bypasses RLS), never through PostgREST.
-- Evidence/report ciphertext lives in the private `enforcer-evidence` bucket,
+- Evidence/report ciphertext lives in the private `jupiter-evidence` bucket,
   accessed only via `SUPABASE_SERVICE_ROLE_KEY` from the server.
 - If you ever add a browser/mobile client that talks to Supabase directly
   (not through this API), you'll need real RLS policies scoped to `orgId`

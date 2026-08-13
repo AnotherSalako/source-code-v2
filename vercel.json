@@ -1,8 +1,14 @@
 {
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
+  "framework": null,
+  "buildCommand": "npm run build && cd frontend && npm install && npm run build",
+  "outputDirectory": "frontend/dist",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index" },
+    { "source": "/(.*)", "destination": "/" }
+  ],
   "crons": [
-    { "path": "/internal/rotate-keys", "schedule": "0 3 * * *" },
-    { "path": "/internal/scheduled-scans", "schedule": "0 4 * * *" },
-    { "path": "/internal/scheduled-watch", "schedule": "0 5 * * *" }
+    { "path": "/api/internal/rotate-keys", "schedule": "0 3 * * *" },
+    { "path": "/api/internal/scheduled-scans", "schedule": "0 4 * * *" },
+    { "path": "/api/internal/scheduled-watch", "schedule": "0 5 * * *" }
   ]
 }

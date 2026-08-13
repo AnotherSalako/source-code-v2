@@ -9,3 +9,5 @@ coverage/
 Thumbs.db
 bin/
 agent/target/
+.vercel
+.env*

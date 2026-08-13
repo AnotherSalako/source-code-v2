@@ -1,4 +1,19 @@
-/frontend
+# /frontend itself is NOT excluded — this project's buildCommand builds it
+# too (see vercel.json), for the combined single-origin deployment. Its own
+# node_modules/dist are excluded below the same way the root ones are:
+# Vercel's own install/build step regenerates them, uploading the local
+# copies would be pure waste (and the exact kind of huge-upload problem
+# /agent/target caused below).
+/frontend/node_modules
+/frontend/dist
 /storage
 /tests
 docker-compose.yml
+# The Rust endpoint agent isn't part of this Node backend deploy at all —
+# /agent/target specifically holds this session's compiled build artifacts
+# (reqwest/keyring/windows-service and their transitive deps), easily
+# several GB, which is what was actually blowing up `vercel --prod`'s
+# upload (repeated "Upload aborted" with no other error detail).
+/agent
+node_modules
+.git

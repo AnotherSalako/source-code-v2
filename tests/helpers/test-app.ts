@@ -290,6 +290,7 @@ export interface FakeDiscoveredAssetRow {
   valueEnc: unknown;
   source: string;
   openPorts: number[];
+  portDetails: unknown;
   status: string;
   promotedAssetId: string | null;
   reviewedBy: string | null;
@@ -874,6 +875,7 @@ const prismaMock = {
         const row: FakeDiscoveredAssetRow = {
           id: nextId("discoveredasset"),
           openPorts: [],
+          portDetails: null,
           status: "NEW",
           promotedAssetId: null,
           reviewedBy: null,
@@ -1196,6 +1198,7 @@ export function seedDiscoveredAsset(
     valueEnc: null,
     source: "crt.sh",
     openPorts: [],
+    portDetails: null,
     status: "NEW",
     promotedAssetId: null,
     reviewedBy: null,

@@ -1,25 +1,25 @@
 import dns from "dns/promises";
-import net from "net";
 import { prisma } from "../../db/prisma";
 import { kms } from "../../crypto";
 import { decryptField, encryptField } from "../../crypto/envelope";
 import { tenantKms } from "../../crypto/tenant";
 import { logger } from "../../config/logger";
 import { isPrivateAddress } from "../scanning/scan-runner";
+import { scanPorts } from "./nmap";
 
 // Deliberately passive/non-intrusive, same posture as the Nuclei tag set in
 // scan-runner.ts: certificate-transparency logs surface subdomain
 // candidates (no request ever reaches the target for that part), and
-// nothing more aggressive than a plain TCP connect against a handful of
-// well-known ports runs against whatever currently resolves publicly — no
-// hostname brute forcing, no banner grabs, no exploitation. Anything past
-// that is a manual pentest activity, same line scan-runner.ts already draws.
-// Results never become scannable Assets on their own — they land as
-// DiscoveredAsset rows a human reviews and promotes (see discovery.routes.ts).
+// nothing more aggressive than an Nmap service/version check (-sV, no
+// scripts, no OS fingerprinting — see nmap.ts) runs against whatever
+// currently resolves publicly, against a handful of well-known ports — no
+// hostname brute forcing, no exploitation. Anything past that is a manual
+// pentest activity, same line scan-runner.ts already draws. Results never
+// become scannable Assets on their own — they land as DiscoveredAsset rows
+// a human reviews and promotes (see discovery.routes.ts).
 const CT_LOOKUP_TIMEOUT_MS = 15_000;
 const MAX_RUNTIME_MS = 3 * 60 * 1000;
 const MAX_CANDIDATES = 50; // crt.sh can return thousands of historical certs for a big domain; cap what one run processes
-const PORT_CHECK_TIMEOUT_MS = 1500;
 const COMMON_PORTS = [21, 22, 25, 80, 443, 3389, 8080, 8443];
 
 function stripWildcard(host: string): string {
@@ -61,26 +61,6 @@ async function resolveLive(hostname: string): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-function checkPort(hostname: string, port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = net.connect({ host: hostname, port, timeout: PORT_CHECK_TIMEOUT_MS });
-    const done = (open: boolean) => {
-      socket.removeAllListeners();
-      socket.destroy();
-      resolve(open);
-    };
-    socket.once("connect", () => done(true));
-    socket.once("timeout", () => done(false));
-    socket.once("error", () => done(false));
-  });
-}
-
-/** Connect-only check (no banner read) against a small, fixed port list — never anything resembling a full port sweep. */
-async function checkOpenPorts(hostname: string): Promise<number[]> {
-  const results = await Promise.all(COMMON_PORTS.map(async (port) => ((await checkPort(hostname, port)) ? port : null)));
-  return results.filter((p): p is number => p !== null);
 }
 
 export async function startDiscovery(params: {
@@ -144,7 +124,8 @@ export async function runDiscoveryJob(discoveryJobId: string): Promise<void> {
       const address = await resolveLive(hostname);
       if (!address) continue; // no longer resolves — not part of the live attack surface today
 
-      const openPorts = isPrivateAddress(address) ? [] : await checkOpenPorts(hostname);
+      const portDetails = isPrivateAddress(address) ? [] : await scanPorts(hostname, COMMON_PORTS);
+      const openPorts = portDetails.map((p) => p.port);
 
       await prisma.discoveredAsset.create({
         data: {
@@ -154,6 +135,7 @@ export async function runDiscoveryJob(discoveryJobId: string): Promise<void> {
           valueEnc: (await encryptField(scopedKms, hostname, `discoveredAsset:value`)) as any,
           source: "crt.sh",
           openPorts,
+          portDetails: portDetails.length > 0 ? (portDetails as any) : undefined,
         },
       });
       discoveredCount++;

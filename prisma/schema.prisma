@@ -421,7 +421,8 @@ model DiscoveredAsset {
   discoveryJob    DiscoveryJob          @relation(fields: [discoveryJobId], references: [id])
   valueEnc        Json // EncryptedField — discovered hostname
   source          String // e.g. "crt.sh"
-  openPorts       Int[]                 @default([])
+  openPorts       Int[]                 @default([]) // port numbers only — kept for backward compatibility with the original connect-only check
+  portDetails     Json? // [{ port, protocol, service, version }] from Nmap -sV (src/modules/discovery/nmap.ts); null if Nmap wasn't reachable when this ran
   status          DiscoveredAssetStatus @default(NEW)
   promotedAssetId String? // Asset.id created on promote — plain string, no relation, same convention as Asset.verifiedBy/ScanJob.triggeredById
   reviewedBy      String?

@@ -681,11 +681,20 @@ What a discovery run actually does, in order:
 2. **Liveness check.** A plain DNS lookup on each candidate — anything that
    no longer resolves is dropped, not reported, so the review queue reflects
    today's attack surface, not certificate history.
-3. **Port check.** For whatever's live and resolves publicly, a connect-only
-   TCP check (no banner grab) against eight well-known ports
-   (21/22/25/80/443/3389/8080/8443) — never anything resembling a full port
-   sweep. A host that resolves to a private/internal address is recorded
-   with no ports checked at all, same `isPrivateAddress` guard scanning uses.
+3. **Port + service check.** For whatever's live and resolves publicly, an
+   Nmap service/version scan (`-sV`, `src/modules/discovery/nmap.ts`)
+   against eight well-known ports (21/22/25/80/443/3389/8080/8443) — never
+   anything resembling a full port sweep, and never `-A`/`--script` (no OS
+   fingerprinting, no NSE scripts — those range from safe to genuinely
+   intrusive, and this stays on the safe side of that line same as Nuclei's
+   fixed tag set does). A host that resolves to a private/internal address
+   is recorded with no ports checked at all, same `isPrivateAddress` guard
+   scanning uses. If Nmap isn't installed or errors, the run degrades to
+   "no port detail" for that host rather than failing — same
+   graceful-degradation precedent as the VirusTotal reputation check in
+   "Website scanning" above. `DiscoveredAsset.portDetails` holds the
+   structured `[{port, protocol, service, version}]` result; `openPorts`
+   (port numbers only) is kept alongside it for backward compatibility.
 
 Results land as `DiscoveredAsset` rows, **never** directly as scannable
 `Asset`s — a human reviews the queue (`GET .../discovered-assets`) and
@@ -701,9 +710,11 @@ either:
 
 Safety constraints, all enforced server-side:
 
-- **Passive-first.** The only step that touches a discovered host at all is
-  a connect-only port check — no banner reads, no HTTP requests, no
-  brute-forcing of hostnames.
+- **Passive-first, with one bounded active step.** Subdomain discovery
+  itself never touches the target (pure OSINT against crt.sh). The one
+  step that does — the Nmap service/version check — is deliberately
+  narrow: a fixed 8-port list, no scripts, no exploitation, no
+  hostname/directory brute-forcing.
 - **Time- and volume-boxed.** Capped at 50 CT-log candidates per run
   (`MAX_CANDIDATES`) and a 3-minute runtime ceiling — leftover candidates
   are picked up on the next run rather than the job running unbounded.

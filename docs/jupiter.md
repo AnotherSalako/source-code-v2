@@ -19,8 +19,11 @@ copy and what to swap.
 assets a client already told it about; Jupiter also finds ones they didn't
 (`src/modules/discovery`, see README "Attack surface discovery"). A
 `VERIFIED` root asset can trigger a passive discovery run: certificate-
-transparency lookup for subdomains, a liveness check, and a connect-only
-probe against a short well-known port list on whatever's live. Results land
+transparency lookup for subdomains, a liveness check, and — upgraded from
+an initial bare TCP connect check to a real Nmap `-sV` service/version scan
+(`src/modules/discovery/nmap.ts`) — a bounded probe against a short
+well-known port list on whatever's live. Same restraint either way: a
+fixed 8-port list, no scripts, no OS fingerprinting. Results land
 as `DiscoveredAsset` rows — never directly as scannable `Asset`s — for a
 human to promote or ignore. This is the same shape as every other
 capability in this codebase: automated *finding*, human-gated *acting*.

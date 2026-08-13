@@ -74,6 +74,15 @@ export const env = {
   // flip this on for local dev/demo use against your own machine.
   allowInternalScanTargets: process.env.ALLOW_INTERNAL_SCAN_TARGETS === "true",
 
+  // Attack surface discovery's port enrichment (src/modules/discovery/nmap.ts)
+  // — service/version detection (-sV) on whatever a discovery run finds
+  // live, replacing the earlier bare connect-only check. Same deployment
+  // constraint as Nuclei above: needs the binary on PATH on a persistent
+  // host, not usable on Vercel's serverless runtime. Missing/unreachable
+  // binary degrades a discovery run to "no port detail" rather than
+  // failing it — see nmap.ts.
+  nmapBinPath: process.env.NMAP_BIN_PATH ?? "nmap",
+
   // Malware/threat-intel checks (src/integrations/virustotal.ts) — evidence
   // file hash lookups and scanned-domain reputation. Entirely optional: unset
   // means every check reports "unavailable" rather than failing anything.

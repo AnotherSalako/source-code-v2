@@ -946,6 +946,41 @@ code review of the shared-chokepoint pattern rather than an end-to-end test,
 the same category of gap already documented for website scanning/discovery
 themselves in this environment.
 
+## Demo / sandbox mode
+
+`scripts/seed-demo.ts` populates a realistic-looking client org — "Nimbus
+Retail (Demo)" — for showing the app to a prospect or buyer without
+touching real client infrastructure or a real AWS account: 2 engagements,
+6 assets across every asset type, 12 findings spanning every severity with
+real-sounding titles/descriptions/CVSS/remediation guidance, 3 retests,
+6 ISO27001 compliance checks in a realistic mix of statuses, a completed
+training session, a discovered asset with a pending watch alert, and one
+endpoint agent device.
+
+```
+npx ts-node --transpile-only scripts/seed-demo.ts                          # seed it
+npx ts-node --transpile-only scripts/seed-demo.ts --reset                  # wipe and reseed
+npx ts-node --transpile-only scripts/seed-demo.ts --invite someone@example.com  # also invite a real person to view it (EXEC_CLIENT)
+```
+
+**Not a separate mocked-up view** — this is real data on the real app,
+going through the exact same path production data does: real KMS envelope
+encryption via whatever provider is configured (`tenantKms`, same as any
+other client), and a genuinely valid Ed25519 device credential CA-signed
+the same way real agent enrollment produces one
+(`src/modules/agents/ca.ts`), not a placeholder string. `--reset` reuses
+`deleteClientData` (the same real, tested erasure path `DELETE
+/clients/:id` uses) rather than a separate cleanup routine, attributed to
+whichever `SECURITY_ADMIN` already exists — it refuses if none does, same
+as `bootstrap-admin.ts`'s own safety rail.
+
+Live-verified for real: seeded directly against the live `adele` database
+(not just the test suite), then read back and decrypted — the findings,
+asset identifiers, and device inventory all round-tripped correctly through
+the real KMS. A real bug surfaced doing this (`EngagementStatus` has no
+`"COMPLETE"` value, only `"CLOSED"` — Prisma's own runtime validation
+caught it immediately), fixed and reseeded before this was called done.
+
 ## AI-assisted triage
 
 Jupiter's second addition beyond Enforcer's original scope: an optional

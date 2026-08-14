@@ -474,6 +474,7 @@ function findingWithEngagement(findingId: string) {
 
 const prismaMock = {
     user: {
+      findFirst: vi.fn(async ({ where }: any) => [...usersByEmail.values()].find((u) => (where?.role ? u.role === where.role : true)) ?? null),
       findUnique: vi.fn(async ({ where }: any) => {
         if (where.email) return usersByEmail.get(where.email) ?? null;
         if (where.id) return [...usersByEmail.values()].find((u) => u.id === where.id) ?? null;
@@ -514,6 +515,7 @@ const prismaMock = {
     },
     client: {
       findUnique: vi.fn(async ({ where }: any) => clientsById.get(where.id) ?? null),
+      findFirst: vi.fn(async ({ where }: any) => [...clientsById.values()].find((c) => (where?.name ? c.name === where.name : true)) ?? null),
       findUniqueOrThrow: vi.fn(async ({ where }: any) => {
         const row = clientsById.get(where.id);
         if (!row) throw new Error("not found");

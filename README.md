@@ -1726,6 +1726,23 @@ gotcha, and exactly what happened here. Fixed by making `captureException`
 the error handler itself `async`, awaiting `captureException()` **before**
 calling `res.json()` — so the function can't be frozen mid-delivery.
 
+**A third bug, unrelated to either fix above**: the original `SENTRY_DSN`
+pointed at a project ID that didn't exist anywhere in the Sentry
+organization at all — likely a stale DSN from an earlier onboarding step,
+never the one actually backing the live project. Caught by querying the
+Sentry API directly (`GET /api/0/organizations/{org}/projects/`) and
+comparing project IDs, rather than assuming a correctly-formatted DSN was
+necessarily the *right* one. Replaced with the real project's current DSN
+(`GET /api/0/projects/{org}/{project}/keys/`).
+
+**Now genuinely verified end to end**: with the flush fix and the correct
+DSN both in place, a fresh `/internal/sentry-test` call produced a real
+issue in Sentry, confirmed by reading it back through the API —
+`"title": "Error: Deliberate Sentry test event [...]"`,
+`"culprit": "GET /api/internal/sentry-test"`, timestamped to the second it
+was triggered. Not inferred from an HTTP status code; read back from
+Sentry's own records.
+
 **Data-collection defaults were overridden, not left as-is** — this SDK
 version's un-configured defaults collect full HTTP request/response bodies
 and local stack-frame variable values on every captured error, which is

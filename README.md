@@ -1712,6 +1712,23 @@ scheduled-scan sweep's heartbeat — if `SENTRY_DSN` ever gets rotated or
 misconfigured, this is how to find out on purpose rather than during a real
 incident.
 
+**Data-collection defaults were overridden, not left as-is** — this SDK
+version's un-configured defaults collect full HTTP request/response bodies
+and local stack-frame variable values on every captured error, which is
+reasonable for most apps and a real contradiction of this one's whole
+design. Route bodies here routinely carry plaintext secrets before
+they're ever encrypted (BYOK access/secret keys, finding descriptions,
+client contact info, cloud credentials); local variables in
+`src/crypto/envelope.ts`'s encrypt/decrypt functions hold decrypted
+plaintext and raw unwrapped DEK bytes for the duration of a call. Sending
+either to a third-party SaaS by default would leak exactly the class of
+data envelope encryption exists to keep from ever leaving app custody in
+plaintext. `initSentry()` now explicitly sets `dataCollection: { httpBodies:
+[], stackFrameVariables: false, cookies: false, userInfo: false }` — every
+other category (headers, query params, error messages, stack traces
+themselves) stays on, since those are what actually make an error report
+useful and none of them carry this app's own secrets by construction.
+
 ## Backups
 
 The Supabase project this app runs on (`adele`) is on the **Free plan**,

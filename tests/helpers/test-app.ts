@@ -75,6 +75,7 @@ vi.mock("../../src/integrations/malware-check", () => ({
 vi.mock("../../src/notifications", () => ({
   notifyIfSevere: vi.fn().mockResolvedValue(undefined),
   notifySweepHeartbeat: vi.fn().mockResolvedValue(undefined),
+  notifyWeeklyDigest: vi.fn().mockResolvedValue(undefined),
 }));
 // Default mirrors NoopAiTriageProvider — no draft, same as AI_TRIAGE_PROVIDER
 // unset. Individual tests override via vi.mocked(aiTriage.draftTriage) when
@@ -523,7 +524,7 @@ const prismaMock = {
       }),
       findMany: vi.fn(async ({ where }: any) => {
         const all = [...clientsById.values()];
-        return where ? all.filter((c) => c.id === where.id) : all;
+        return where?.id !== undefined ? all.filter((c) => matchWhereField(c.id, where.id)) : all;
       }),
       create: vi.fn(async ({ data }: any) => {
         const row: FakeClientRow = { id: nextId("client"), industry: null, primaryContactEnc: null, billingInfoEnc: null, createdAt: new Date(), kmsKeyId: null, ...data };
@@ -636,6 +637,7 @@ const prismaMock = {
       findMany: vi.fn(async ({ where }: any) => {
         let all = [...engagementsById.values()];
         if (where?.clientId) all = all.filter((e) => e.clientId === where.clientId);
+        if (where?.status) all = all.filter((e) => matchWhereField(e.status, where.status));
         return all.map((e) => ({ ...e, client: clientsById.get(e.clientId) }));
       }),
       create: vi.fn(async ({ data }: any) => {
@@ -1078,6 +1080,7 @@ const prismaMock = {
       findMany: vi.fn(async ({ where, include }: any) => {
         let all = [...watchAlertsById.values()];
         if (where?.engagementId) all = all.filter((a) => matchWhereField(a.engagementId, where.engagementId));
+        if (where?.createdAt?.gte) all = all.filter((a) => a.createdAt >= where.createdAt.gte);
         all = [...all].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
         if (include?.discoveredAsset) {
           return all.map((row) => ({
@@ -1166,7 +1169,11 @@ const prismaMock = {
         return row;
       }),
       findUnique: vi.fn(async ({ where }: any) => devicesById.get(where.id) ?? null),
-      findMany: vi.fn(async ({ where }: any) => [...devicesById.values()].filter((d) => matchWhereField(d.clientId, where?.clientId))),
+      findMany: vi.fn(async ({ where }: any) =>
+        [...devicesById.values()].filter(
+          (d) => matchWhereField(d.clientId, where?.clientId) && matchWhereField(d.status, where?.status)
+        )
+      ),
       update: vi.fn(async ({ where, data }: any) => {
         const row = devicesById.get(where.id)!;
         Object.assign(row, data);

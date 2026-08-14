@@ -946,6 +946,37 @@ code review of the shared-chokepoint pattern rather than an end-to-end test,
 the same category of gap already documented for website scanning/discovery
 themselves in this environment.
 
+## Scheduled digest reports
+
+`GET /internal/weekly-digest`, a weekly Vercel Cron job (Mondays,
+`CRON_SECRET`-gated like every other `/internal/*` cron route), reports
+what changed platform-wide over the last 7 days: new findings (by
+severity), watch-mode drift alerts, active engagement count, and any
+`ACTIVE` endpoint agent that hasn't checked in for 7+ days. Sent to
+whichever notifiers are already configured (`SLACK_WEBHOOK_URL`/
+`RESEND_API_KEY`+friends — the same fan-out `notifyIfSevere`/
+`notifySweepHeartbeat` already use), no-opping cleanly if neither is set.
+
+**Platform-wide, not per-client** — this goes to whoever runs Jupiter
+(internal ops), not to client contacts; sending an automated summary to a
+client's own stakeholders would be a real product decision (whose data,
+opted in how) this wasn't asked to make. The point, per the original ask:
+turn the platform from "something you have to log into" into something
+that proactively tells you when it matters — the same reasoning behind the
+existing sweep heartbeat, just on a weekly cadence covering more ground.
+
+`src/modules/internal/digest.service.ts`'s `buildWeeklyDigest()` is
+findMany-plus-manual-aggregation, deliberately not `groupBy`/`count` —
+matches how the rest of this app already computes summaries (e.g. `GET
+/clients/:id/findings-history`), which keeps it testable against the same
+fake-DB harness every other service test uses rather than needing new
+mock primitives. Live-verified against the real `adele` database: ran for
+real against the actual seeded demo data above and returned exactly the
+expected counts (1 drift alert from the demo watch alert created a day
+earlier, 0 stale agents since the demo device's last check-in was under
+7 days old, 0 new findings since the demo findings' `discoveredAt` values
+are all just outside the 7-day window).
+
 ## Demo / sandbox mode
 
 `scripts/seed-demo.ts` populates a realistic-looking client org — "Nimbus
@@ -1459,6 +1490,7 @@ POST   /watch-alerts/:id/acknowledge         (not-yet-acknowledged only)
 GET    /internal/scheduled-watch             (cron-only, CRON_SECRET-authenticated — see "Watch mode")
 GET    /internal/scheduled-backup            (cron-only, CRON_SECRET-authenticated — see "Backups")
 GET    /internal/backups                     (security_admin; metadata only — see "Backups")
+GET    /internal/weekly-digest                (cron-only, CRON_SECRET-authenticated — see "Scheduled digest reports")
 POST   /engagements/:id/tests                (security_admin; requires authorization)
 GET    /engagements/:id/tests
 PATCH  /engagements/:id/tests/:testId        (security_admin)

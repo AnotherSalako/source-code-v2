@@ -10,6 +10,7 @@
     { "path": "/api/internal/rotate-keys", "schedule": "0 3 * * *" },
     { "path": "/api/internal/scheduled-scans", "schedule": "0 4 * * *" },
     { "path": "/api/internal/scheduled-watch", "schedule": "0 5 * * *" },
-    { "path": "/api/internal/scheduled-backup", "schedule": "0 6 * * *" }
+    { "path": "/api/internal/scheduled-backup", "schedule": "0 6 * * *" },
+    { "path": "/api/internal/weekly-digest", "schedule": "0 8 * * 1" }
   ]
 }

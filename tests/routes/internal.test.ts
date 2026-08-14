@@ -100,3 +100,18 @@ describe("GET /internal/backups", () => {
     expect(res.body.backups[0]).not.toHaveProperty("encryptedDataKey");
   });
 });
+
+describe("GET /internal/weekly-digest", () => {
+  it("401s with a wrong/missing bearer secret", async () => {
+    await request(app).get("/internal/weekly-digest").expect(401);
+  });
+
+  it("200s with the correct secret and returns real digest shape (notifyWeeklyDigest is mocked — this only verifies the auth gate and digest computation)", async () => {
+    if (!REAL_CRON_SECRET) return;
+    const res = await request(app).get("/internal/weekly-digest").set("Authorization", `Bearer ${REAL_CRON_SECRET}`).expect(200);
+    expect(res.body).toHaveProperty("totalNewFindings");
+    expect(res.body).toHaveProperty("driftAlerts");
+    expect(res.body).toHaveProperty("activeEngagements");
+    expect(res.body).toHaveProperty("staleAgents");
+  });
+});

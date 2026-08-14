@@ -1,7 +1,7 @@
 import { env } from "../config/env";
 import { logger } from "../config/logger";
 import { prisma } from "../db/prisma";
-import { NotificationProvider, FindingNotification, SweepHeartbeat } from "./provider";
+import { NotificationProvider, FindingNotification, SweepHeartbeat, WeeklyDigest } from "./provider";
 import { SlackNotificationProvider } from "./providers/slack";
 import { ResendNotificationProvider } from "./providers/resend";
 
@@ -61,5 +61,19 @@ export async function notifySweepHeartbeat(h: SweepHeartbeat): Promise<void> {
   const results = await Promise.allSettled(notifiers.map((n) => n.notifyHeartbeat(h)));
   for (const result of results) {
     if (result.status === "rejected") logger.error({ err: result.reason }, "Sweep heartbeat notification failed");
+  }
+}
+
+/**
+ * Fired once a week by GET /internal/weekly-digest (see vercel.json "crons").
+ * Same no-op-with-zero-notifiers shape as the other two — a digest with no
+ * one to receive it is just wasted computation, not an error.
+ */
+export async function notifyWeeklyDigest(d: WeeklyDigest): Promise<void> {
+  if (notifiers.length === 0) return;
+
+  const results = await Promise.allSettled(notifiers.map((n) => n.notifyDigest(d)));
+  for (const result of results) {
+    if (result.status === "rejected") logger.error({ err: result.reason }, "Weekly digest notification failed");
   }
 }

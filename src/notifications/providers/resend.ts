@@ -4,7 +4,7 @@
 // live account — no credentials available — but this is ordinary REST
 // usage against one well-documented endpoint.
 
-import { NotificationProvider, FindingNotification, SweepHeartbeat } from "../provider";
+import { NotificationProvider, FindingNotification, SweepHeartbeat, WeeklyDigest } from "../provider";
 
 const SEVERITY_COLOR: Record<string, string> = { CRITICAL: "#b91c1c", HIGH: "#c2410c" };
 
@@ -58,6 +58,36 @@ export class ResendNotificationProvider implements NotificationProvider {
         html:
           `<p style="color:#666;font-size:13px">Scheduled scan sweep ran at ${h.timestamp.toISOString()}.</p>` +
           `<p>${h.eligibleCount} asset(s) eligible · ${h.startedCount} scan(s) started · ${h.skippedCount} skipped.</p>`,
+      }),
+    });
+    if (!res.ok) throw new Error(`Resend send failed: HTTP ${res.status}`);
+  }
+
+  async notifyDigest(d: WeeklyDigest): Promise<void> {
+    const severityRows = d.newFindingsBySeverity.length
+      ? d.newFindingsBySeverity.map((s) => `<li>${escapeHtml(s.severity)}: ${s.count}</li>`).join("")
+      : "<li>none</li>";
+    const staleRows = d.staleAgents.length
+      ? d.staleAgents
+          .map(
+            (a) =>
+              `<li>${escapeHtml(a.deviceName)} (${escapeHtml(a.clientName)}) — last seen ${a.lastCheckInAt ? a.lastCheckInAt.toISOString() : "never"}</li>`
+          )
+          .join("")
+      : "<li>none</li>";
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: this.from,
+        to: this.to,
+        subject: `Jupiter weekly digest — ${d.totalNewFindings} new finding(s), ${d.driftAlerts} drift alert(s)`,
+        html:
+          `<p style="color:#666;font-size:13px">Since ${d.since.toISOString().slice(0, 10)}.</p>` +
+          `<p><strong>New findings:</strong> ${d.totalNewFindings}</p><ul>${severityRows}</ul>` +
+          `<p><strong>Drift alerts (new watch-mode changes):</strong> ${d.driftAlerts}</p>` +
+          `<p><strong>Active engagements:</strong> ${d.activeEngagements}</p>` +
+          `<p><strong>Agents silent 7+ days:</strong></p><ul>${staleRows}</ul>`,
       }),
     });
     if (!res.ok) throw new Error(`Resend send failed: HTTP ${res.status}`);

@@ -115,3 +115,15 @@ describe("GET /internal/weekly-digest", () => {
     expect(res.body).toHaveProperty("staleAgents");
   });
 });
+
+describe("GET /internal/sentry-test", () => {
+  it("401s with a wrong/missing bearer secret (and never throws, so no error handler runs)", async () => {
+    await request(app).get("/internal/sentry-test").expect(401);
+  });
+
+  it("500s with the correct secret — the deliberate throw actually reaches the global error handler", async () => {
+    if (!REAL_CRON_SECRET) return;
+    const res = await request(app).get("/internal/sentry-test").set("Authorization", `Bearer ${REAL_CRON_SECRET}`).expect(500);
+    expect(res.body).toEqual({ error: "Internal server error" });
+  });
+});

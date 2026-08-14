@@ -1491,6 +1491,7 @@ GET    /internal/scheduled-watch             (cron-only, CRON_SECRET-authenticat
 GET    /internal/scheduled-backup            (cron-only, CRON_SECRET-authenticated — see "Backups")
 GET    /internal/backups                     (security_admin; metadata only — see "Backups")
 GET    /internal/weekly-digest                (cron-only, CRON_SECRET-authenticated — see "Scheduled digest reports")
+GET    /internal/sentry-test                  (cron-only, CRON_SECRET-authenticated — deliberately throws, see "Error tracking")
 POST   /engagements/:id/tests                (security_admin; requires authorization)
 GET    /engagements/:id/tests
 PATCH  /engagements/:id/tests/:testId        (security_admin)
@@ -1700,11 +1701,16 @@ call inside `createApp()` itself, so it runs for both entry points; full
 test suite (335 tests) still passes with every route test's `createApp()`
 call now exercising this on every run.
 
-**Still outstanding**: no real `SENTRY_DSN` is configured for this
-deployment yet — that needs a real Sentry account and project, the same
-"needs a real credential from you" pattern as AWS/Anthropic/VirusTotal
-earlier in this document. Until then, error tracking is correctly wired but
-inert; errors still land in Vercel's own function logs either way.
+**Resolved**: a real `SENTRY_DSN` is now configured in production.
+`GET /internal/sentry-test` (`CRON_SECRET`-gated, like every other
+`/internal/*` route) deliberately throws a real, findable error through the
+exact same path a genuine unhandled exception takes — not a shortcut
+straight to `captureException()` — so hitting it is a genuine end-to-end
+check of the whole pipeline, not just the wiring. Kept as a permanent
+route, not a one-off: the same "silence is ambiguous" reasoning as the
+scheduled-scan sweep's heartbeat — if `SENTRY_DSN` ever gets rotated or
+misconfigured, this is how to find out on purpose rather than during a real
+incident.
 
 ## Backups
 

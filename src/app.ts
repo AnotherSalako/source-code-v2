@@ -34,6 +34,7 @@ import { internalScheduledScansRouter } from "./modules/internal/scheduled-scans
 import { internalScheduledWatchRouter } from "./modules/internal/scheduled-watch.routes";
 import { internalBackupRouter } from "./modules/internal/backup.routes";
 import { internalDigestRouter } from "./modules/internal/digest.routes";
+import { internalSentryTestRouter } from "./modules/internal/sentry-test.routes";
 import { scanRouter } from "./modules/scanning/scan.routes";
 import { discoveryRouter } from "./modules/discovery/discovery.routes";
 import { agentsRouter } from "./modules/agents/agents.routes";
@@ -112,6 +113,7 @@ export function createApp() {
   app.use(internalScheduledWatchRouter);
   app.use(internalBackupRouter);
   app.use(internalDigestRouter);
+  app.use(internalSentryTestRouter);
   app.use(cspmRouter);
   app.use(sbomRouter);
   app.use(byokRouter);

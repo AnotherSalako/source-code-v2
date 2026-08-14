@@ -11,6 +11,7 @@ import { sideEffectLimiter } from "../../middleware/rate-limit";
 import { writeAuditLog } from "../audit/audit.service";
 import { caPublicKeyBase64, signCredential } from "./ca";
 import { requireDeviceAuth } from "./device-auth.middleware";
+import { recordUsageEvent } from "../usage/usage.service";
 
 export const agentsRouter = Router();
 
@@ -220,6 +221,8 @@ agentsRouter.post("/internal/agents/checkin", requireDeviceAuth, async (req, res
     resourceId: req.device!.id,
     result: "SUCCESS",
   });
+
+  await recordUsageEvent(req.device!.clientId, "AGENT_CHECK_IN");
 
   res.json({ received: true });
 });

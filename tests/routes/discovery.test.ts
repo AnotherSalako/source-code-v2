@@ -69,6 +69,10 @@ describe("POST /engagements/:id/assets/:assetId/discover — every safety gate",
     await request(app).post("/engagements/eng-a/assets/asset-f/discover").set("x-test-user", "admin@example.com").expect(409);
   });
 
+  // Same reasoning as scan.test.ts's equivalent test: usage-event recording
+  // lives inside startDiscovery() in discovery-runner.ts, which this
+  // harness mocks out entirely (real side effects — DNS, nmap, network).
+  // Covered by tests/usage.test.ts instead.
   it("202s and queues a discovery run once every gate passes", async () => {
     seedAsset({ id: "asset-g", engagementId: "eng-a", type: "WEB", name: "Site", inScope: true, verificationStatus: "VERIFIED" });
     seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });

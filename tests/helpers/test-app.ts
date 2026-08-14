@@ -425,6 +425,7 @@ const clientKmsCredentialsByClientId = new Map<string, FakeClientKmsCredentialRo
 // Array, not a Map — unlike the credential tables above, a client can have
 // any number of usage records, there's no unique-per-client constraint.
 const aiUsageRecords: { id: string; clientId: string; endpoint: string; createdAt: Date }[] = [];
+const usageEvents: { id: string; clientId: string; kind: string; createdAt: Date }[] = [];
 const engagementsById = new Map<string, FakeEngagementRow>();
 const assetsById = new Map<string, FakeAssetRow>();
 const testsById = new Map<string, FakeTestRow>();
@@ -606,6 +607,20 @@ const prismaMock = {
       create: vi.fn(async ({ data }: any) => {
         const row = { id: nextId("aiusagerecord"), createdAt: new Date(), ...data };
         aiUsageRecords.push(row);
+        return row;
+      }),
+    },
+    usageEvent: {
+      findMany: vi.fn(async () => [...usageEvents]),
+      count: vi.fn(async ({ where }: any) => {
+        const cutoff = where?.createdAt?.gte as Date | undefined;
+        return usageEvents.filter(
+          (e) => e.clientId === where.clientId && e.kind === where.kind && (!cutoff || e.createdAt >= cutoff)
+        ).length;
+      }),
+      create: vi.fn(async ({ data }: any) => {
+        const row = { id: nextId("usageevent"), createdAt: new Date(), ...data };
+        usageEvents.push(row);
         return row;
       }),
     },
@@ -1278,6 +1293,15 @@ export function seedAiUsageRecord(clientId: string, overrides: { endpoint?: stri
   });
 }
 
+export function seedUsageEvent(clientId: string, kind: string, overrides: { createdAt?: Date } = {}): void {
+  usageEvents.push({ id: nextId("usageevent"), clientId, kind, createdAt: overrides.createdAt ?? new Date() });
+}
+
+/** Test-only introspection: every UsageEvent recorded so far, across all clients. */
+export function getUsageEvents(): { id: string; clientId: string; kind: string; createdAt: Date }[] {
+  return [...usageEvents];
+}
+
 export function seedEngagement(row: Partial<FakeEngagementRow> & { id: string; clientId: string }): FakeEngagementRow {
   const full: FakeEngagementRow = {
     status: "SCOPING",
@@ -1541,6 +1565,7 @@ export function resetFakeDb(): void {
   cloudCredentialsByClientId.clear();
   clientKmsCredentialsByClientId.clear();
   aiUsageRecords.length = 0;
+  usageEvents.length = 0;
   engagementsById.clear();
   assetsById.clear();
   testsById.clear();

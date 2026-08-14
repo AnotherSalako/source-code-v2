@@ -244,6 +244,7 @@ model Client {
   cloudCredential  CloudCredential?
   kmsCredential    ClientKmsCredential?
   aiUsageRecords   AiUsageRecord[]
+  usageEvents      UsageEvent[]
   users            User[]
   engagements      Engagement[]
   devices          Device[]
@@ -789,6 +790,29 @@ model AiUsageRecord {
   createdAt DateTime @default(now())
 
   @@index([clientId, createdAt])
+}
+
+enum UsageEventKind {
+  SCAN
+  DISCOVERY
+  AGENT_CHECK_IN
+}
+
+// Per-org usage metering (src/modules/usage) — the foundation for any future
+// pricing tier, and a much cheaper thing to start recording now than to
+// retrofit once multiple real orgs exist. Deliberately separate from
+// AiUsageRecord (which already exists and drives real budget enforcement,
+// src/ai/budget.ts) rather than merging the two into one table — this one
+// has no enforcement behavior riding on it, just visibility, and keeping
+// them apart means this feature can never accidentally affect AI spend caps.
+model UsageEvent {
+  id        String         @id @default(uuid())
+  clientId  String
+  client    Client         @relation(fields: [clientId], references: [id])
+  kind      UsageEventKind
+  createdAt DateTime       @default(now())
+
+  @@index([clientId, kind, createdAt])
 }
 
 // One row per full-database backup (src/modules/internal/backup.service.ts),

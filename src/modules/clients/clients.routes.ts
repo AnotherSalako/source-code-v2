@@ -8,6 +8,7 @@ import { requireRole, assertOwnOrg } from "../../middleware/rbac";
 import { sideEffectLimiter } from "../../middleware/rate-limit";
 import { writeAuditLog } from "../audit/audit.service";
 import { deleteClientData } from "./client-deletion.service";
+import { getUsageSummary } from "../usage/usage.service";
 
 export const clientsRouter = Router();
 
@@ -176,6 +177,26 @@ clientsRouter.get("/:id/findings-history", requireAuth, async (req, res) => {
   });
 
   res.json({ totalFindings: findings.length, bySeverity, byStatus, recurring, byEngagement });
+});
+
+// Foundation for any future pricing tier (src/modules/usage) — counts of
+// scans run, discovery runs, agent check-ins, and AI calls, both all-time
+// and over a recent rolling window. Same org-scope rule as every other
+// client-scoped GET: the org's own users can see their own usage, staff can
+// see anyone's.
+clientsRouter.get("/:id/usage", requireAuth, async (req, res) => {
+  const client = await prisma.client.findUnique({ where: { id: req.params.id } });
+  if (!client || !assertOwnOrg(req, client.id)) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+
+  const days = Math.min(Math.max(parseInt(String(req.query.days ?? "30"), 10) || 30, 1), 365);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const [allTime, recent] = await Promise.all([getUsageSummary(client.id), getUsageSummary(client.id, since)]);
+
+  res.json({ allTime, recent: { ...recent, sinceDays: days } });
 });
 
 const kmsKeySchema = z.object({

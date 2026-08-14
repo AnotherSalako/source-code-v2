@@ -6,6 +6,7 @@ import { logger } from "../../config/logger";
 import { isPrivateAddress } from "../scanning/scan-runner";
 import { scanPorts, NmapPortResult } from "./nmap";
 import { queryCertTransparency, resolveLive, bareHostname, MAX_CANDIDATES, MAX_RUNTIME_MS, COMMON_PORTS } from "./discovery-runner";
+import { recordUsageEvent } from "../usage/usage.service";
 
 // Ordinary discovery (discovery-runner.ts) deliberately never revisits a
 // hostname it's already seen — a re-run just dedups and skips. That's
@@ -92,7 +93,10 @@ export function startWatchCycle(params: { engagementId: string; assetId: string;
         triggeredById: params.triggeredById,
       },
     })
-    .then((job) => {
+    .then(async (job) => {
+      const engagement = await prisma.engagement.findUnique({ where: { id: params.engagementId }, select: { clientId: true } });
+      if (engagement) await recordUsageEvent(engagement.clientId, "DISCOVERY");
+
       void runWatchCycleJob(job.id, params.engagementId, params.assetId); // fire-and-forget, mirrors runDiscoveryJob
       return { discoveryJobId: job.id };
     });

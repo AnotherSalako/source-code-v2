@@ -6,6 +6,7 @@ import { tenantKms } from "../../crypto/tenant";
 import { logger } from "../../config/logger";
 import { isPrivateAddress } from "../scanning/scan-runner";
 import { scanPorts } from "./nmap";
+import { recordUsageEvent } from "../usage/usage.service";
 
 // Deliberately passive/non-intrusive, same posture as the Nuclei tag set in
 // scan-runner.ts: certificate-transparency logs surface subdomain
@@ -81,6 +82,11 @@ export async function startDiscovery(params: {
       triggeredById: params.triggeredById,
     },
   });
+
+  // Usage metering (src/modules/usage) — same chokepoint reasoning as
+  // startScan in scan-runner.ts.
+  const engagement = await prisma.engagement.findUnique({ where: { id: params.engagementId }, select: { clientId: true } });
+  if (engagement) await recordUsageEvent(engagement.clientId, "DISCOVERY");
 
   // Fire and forget, same reasoning as startScan in scan-runner.ts: the
   // caller polls GET .../discovery-jobs/:id rather than waiting on this

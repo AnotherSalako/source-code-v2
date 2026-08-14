@@ -54,6 +54,14 @@ describe("POST /engagements/:id/assets/:assetId/scan — every safety gate", () 
     await request(app).post("/engagements/eng-a/assets/asset-f/scan").set("x-test-user", "admin@example.com").expect(409);
   });
 
+  // Usage-event recording (src/modules/usage) lives inside startScan() in
+  // scan-runner.ts, not in this route — and scan-runner.ts is globally
+  // mocked out in this test harness (real side effects: spawns Nuclei,
+  // hits the network), so it can't be observed from here. Covered instead
+  // by tests/usage.test.ts, which exercises the real usage.service.ts
+  // directly, and indirectly by the shared chokepoint reasoning documented
+  // on startScan/startDiscovery themselves (both the manual route here and
+  // the scheduled cron sweep go through the same function).
   it("202s and queues a scan once every gate passes", async () => {
     seedAsset({ id: "asset-g", engagementId: "eng-a", type: "WEB", name: "Site", inScope: true, verificationStatus: "VERIFIED" });
     seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });

@@ -916,6 +916,36 @@ runs — confirmed it denies once the daily/monthly cap is hit, correctly
 excludes records outside the rolling window, and never lets one org's
 usage affect another's.
 
+## Usage metering
+
+`GET /clients/:id/usage` (own org, or `SECURITY_ADMIN` for any org) reports
+per-org counts of scans run, discovery runs, agent check-ins, and AI calls
+— both all-time and over a recent rolling window (`?days=`, default 30,
+clamped to 1–365). The foundation for any future pricing tier: far cheaper
+to start recording this now, while it's one org's worth of data, than to
+retrofit it once real client orgs exist with no history to build on.
+
+A new `UsageEvent` table (`SCAN` / `DISCOVERY` / `AGENT_CHECK_IN`) is
+written at the same chokepoints real work already funnels through —
+`startScan`/`startDiscovery` in the scan/discovery runners (shared by both
+the manual "run it now" route and the scheduled cron sweep, so either path
+counts identically), `startWatchCycle` for watch-mode re-scans, and the
+agent inventory check-in route. AI calls aren't double-recorded into this
+table — the summary reads directly from the existing `AiUsageRecord` table
+(`src/ai/budget.ts`) instead, so there's one real source of truth for "was
+an AI call made," not two tables that could drift apart.
+
+Live-tested for the parts that can be: `tests/usage.test.ts` exercises the
+real counting/windowing logic directly, and the agent check-in route test
+proves a real HTTP request produces a real `UsageEvent` row end to end. The
+scan/discovery/watch wiring couldn't be verified the same way through an
+HTTP request in this environment — `scan-runner.ts`/`discovery-runner.ts`
+are deliberately mocked out in the route-level test harness (they have real
+side effects: spawning Nuclei, DNS lookups, nmap) — so that piece rests on
+code review of the shared-chokepoint pattern rather than an end-to-end test,
+the same category of gap already documented for website scanning/discovery
+themselves in this environment.
+
 ## AI-assisted triage
 
 Jupiter's second addition beyond Enforcer's original scope: an optional
@@ -1356,6 +1386,7 @@ POST   /clients                              (security_admin)
 GET    /clients                              (security_admin: all; client roles: own org only)
 GET    /clients/:id
 GET    /clients/:id/findings-history         (aggregated across every engagement for the client)
+GET    /clients/:id/usage                    (scans/discovery/agent-check-ins/AI calls, all-time + recent — see "Usage metering")
 PATCH  /clients/:id/kms-key                  (security_admin; assigns a dedicated per-tenant key — see "Per-tenant encryption keys")
 PUT    /clients/:id/kms-credential           (security_admin; real BYOK — verifies against AWS before storing — see "BYOK")
 GET    /clients/:id/kms-credential           (security_admin; status only, never the secret)
@@ -1391,6 +1422,8 @@ POST   /discovered-assets/:id/ignore         (security_admin; NEW only)
 GET    /engagements/:id/watch-alerts         (decrypted hostname joined in — see "Watch mode")
 POST   /watch-alerts/:id/acknowledge         (not-yet-acknowledged only)
 GET    /internal/scheduled-watch             (cron-only, CRON_SECRET-authenticated — see "Watch mode")
+GET    /internal/scheduled-backup            (cron-only, CRON_SECRET-authenticated — see "Backups")
+GET    /internal/backups                     (security_admin; metadata only — see "Backups")
 POST   /engagements/:id/tests                (security_admin; requires authorization)
 GET    /engagements/:id/tests
 PATCH  /engagements/:id/tests/:testId        (security_admin)

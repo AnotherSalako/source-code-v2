@@ -40,6 +40,7 @@ export const BACKUP_MODELS = [
   "cloudCredential",
   "clientKmsCredential",
   "aiUsageRecord",
+  "usageEvent",
 ] as const;
 
 export type BackupModel = (typeof BACKUP_MODELS)[number];

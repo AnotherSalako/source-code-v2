@@ -1,7 +1,7 @@
 import request from "supertest";
 import crypto from "crypto";
 import { describe, it, expect, beforeEach } from "vitest";
-import { seedUser, seedClient, seedEnrollmentToken, seedDevice, resetFakeDb } from "../helpers/test-app";
+import { seedUser, seedClient, seedEnrollmentToken, seedDevice, getUsageEvents, resetFakeDb } from "../helpers/test-app";
 
 const { createApp } = await import("../../src/app");
 const app = createApp();
@@ -316,6 +316,9 @@ describe("POST /internal/agents/checkin — inventory check-in", () => {
     const device = devices.body.find((d: any) => d.id === "dev-checkin-ok");
     expect(device.osVersion).toBe("Ubuntu 24.04");
     expect(device.lastCheckInAt).toBeTruthy();
+
+    const events = getUsageEvents();
+    expect(events.some((e) => e.clientId === CLIENT_A && e.kind === "AGENT_CHECK_IN")).toBe(true);
   });
 
   it("rejects a signature made over a different body than the one actually sent", async () => {

@@ -13,6 +13,7 @@ import {
   seedComplianceCheck,
   seedTrainingSession,
   seedScanJob,
+  seedUsageEvent,
   resetFakeDb,
   getRawFinding,
 } from "../helpers/test-app";
@@ -378,5 +379,44 @@ describe("DELETE /clients/:id — self-service data erasure", () => {
       .expect(200);
 
     await request(app).get("/clients/client-a").set("x-test-user", "admin@example.com").expect(404);
+  });
+});
+
+describe("GET /clients/:id/usage", () => {
+  it("401s with no auth", async () => {
+    seedClient({ id: "client-a", name: "Acme" });
+    await request(app).get("/clients/client-a/usage").expect(401);
+  });
+
+  it("404s when a client-role user requests a DIFFERENT org's usage — same IDOR protection as the client record itself", async () => {
+    seedUser({ email: "tech@acme.com", name: "Tech", role: "TECHNICAL_CLIENT", orgId: "client-a" });
+    seedClient({ id: "client-a", name: "Acme" });
+    seedClient({ id: "client-b", name: "Beta Corp" });
+
+    await request(app).get("/clients/client-b/usage").set("x-test-user", "tech@acme.com").expect(404);
+  });
+
+  it("reports both all-time and recent-window counts for the caller's own org", async () => {
+    seedUser({ email: "tech@acme.com", name: "Tech", role: "TECHNICAL_CLIENT", orgId: "client-a" });
+    seedClient({ id: "client-a", name: "Acme" });
+    seedUsageEvent("client-a", "SCAN");
+    seedUsageEvent("client-a", "SCAN");
+    seedUsageEvent("client-a", "DISCOVERY");
+    seedUsageEvent("client-a", "AGENT_CHECK_IN", { createdAt: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000) }); // outside the default 30-day window
+
+    const res = await request(app).get("/clients/client-a/usage").set("x-test-user", "tech@acme.com").expect(200);
+
+    expect(res.body.allTime).toEqual({ scansRun: 2, discoveryRuns: 1, agentCheckIns: 1, aiCalls: 0 });
+    expect(res.body.recent.scansRun).toBe(2);
+    expect(res.body.recent.agentCheckIns).toBe(0); // the 90-day-old check-in falls outside the 30-day recent window
+    expect(res.body.recent.sinceDays).toBe(30);
+  });
+
+  it("accepts a custom ?days= window, clamped to a sane range", async () => {
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+    seedClient({ id: "client-a", name: "Acme" });
+
+    const res = await request(app).get("/clients/client-a/usage?days=7").set("x-test-user", "admin@example.com").expect(200);
+    expect(res.body.recent.sinceDays).toBe(7);
   });
 });

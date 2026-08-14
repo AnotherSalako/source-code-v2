@@ -11,6 +11,7 @@ import { env } from "../../config/env";
 import { logger } from "../../config/logger";
 import { importScanItems } from "../findings/import.service";
 import { checkUrlReputation } from "../../integrations/malware-check";
+import { recordUsageEvent } from "../usage/usage.service";
 
 // Deliberately non-intrusive: header/config/exposure checks only, no
 // fuzzing, brute-force, or exploit templates. This is what "automated,
@@ -139,6 +140,12 @@ export async function startScan(params: {
       triggeredById: params.triggeredById,
     },
   });
+
+  // Usage metering (src/modules/usage) — counted here, the one chokepoint
+  // both the manual route and the scheduled cron sweep go through, rather
+  // than at each caller separately.
+  const engagement = await prisma.engagement.findUnique({ where: { id: params.engagementId }, select: { clientId: true } });
+  if (engagement) await recordUsageEvent(engagement.clientId, "SCAN");
 
   // Fire and forget: this process must stay alive for the scan's duration
   // to complete it (see README "Website scanning" — not deployable on

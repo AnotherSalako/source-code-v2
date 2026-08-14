@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import { nlQuery } from "../../ai";
+import { checkAndRecordAiUsage } from "../../ai/budget";
 
 // The one real security boundary for this whole feature: every field the
 // AI provider claims to have extracted gets re-checked here against a
@@ -55,6 +56,7 @@ function buildWhereClause(engagementId: string, filter: NlFilter): Prisma.Findin
 export interface NlQueryResult {
   understood: boolean;
   interpretedFilter: NlFilter | null;
+  reason?: string; // only set for the budget-cap case — worth surfacing distinctly, unlike every other understood:false cause, since "try rephrasing" is actively wrong advice when the real reason is a cost cap
   findings: Array<{
     id: string;
     title: string;
@@ -74,7 +76,10 @@ export interface NlQueryResult {
  * survive validation — because a caller shouldn't need to tell those apart
  * to know "try rephrasing the question" is the right next step either way.
  */
-export async function resolveNlQuery(engagementId: string, question: string): Promise<NlQueryResult> {
+export async function resolveNlQuery(engagementId: string, clientId: string, question: string): Promise<NlQueryResult> {
+  const budget = await checkAndRecordAiUsage(clientId, "nlQuery");
+  if (!budget.allowed) return { understood: false, interpretedFilter: null, reason: budget.reason, findings: [] };
+
   const raw = await nlQuery.translateQuery(question);
   if (!raw) return { understood: false, interpretedFilter: null, findings: [] };
 

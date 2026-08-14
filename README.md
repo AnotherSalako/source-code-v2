@@ -885,6 +885,37 @@ there (unlike `create`, where the same value correctly means "store null"),
 so a state with zero open ports never actually cleared the previous scan's
 stale data. Fixed to use `null` explicitly, re-verified live.
 
+## AI budget caps
+
+Checked before every real call across all three AI features below (triage,
+NL querying, attack-path narration) — `src/ai/budget.ts`'s
+`checkAndRecordAiUsage(clientId, endpoint)` is the one shared gate all
+three call, not three separate copies of the same logic. Per-org, two
+tiers: a rolling 24-hour daily cap and a rolling 30-day monthly cap
+(`AI_DAILY_CALL_CAP` / `AI_MONTHLY_CALL_CAP`, defaulting to 200/3000),
+enforced by counting real rows in a new `AiUsageRecord` table — one row
+per attempted call, written as part of the same check a caller can't skip
+past without the attempt being recorded.
+
+**Deliberately DB-backed, not `express-rate-limit`'s in-memory counters**
+(what the rest of this app's rate limiting already uses, `src/middleware/
+rate-limit.ts`). This app runs on Vercel serverless, where in-memory state
+doesn't survive a cold start between invocations — an in-memory cap would
+silently stop actually capping anything the moment a function instance
+recycled, which for something billed per-call is the one place that
+gap can't be allowed to exist quietly.
+
+**No-ops entirely while `AI_TRIAGE_PROVIDER` isn't `"anthropic"`** — the
+same toggle all three AI features already share — since nothing costs
+money to cap yet. That's the point, not a shortcut: the caps exist and are
+tested *before* anyone flips real Anthropic calls on, not added under
+pressure after a surprise bill. Live-tested for real (not just "should
+work"): a dedicated test file mocks `env.aiTriageProvider` to `"anthropic"`
+specifically so `checkAndRecordAiUsage`'s actual cap-enforcement logic
+runs — confirmed it denies once the daily/monthly cap is hit, correctly
+excludes records outside the rolling window, and never lets one org's
+usage affect another's.
+
 ## AI-assisted triage
 
 Jupiter's second addition beyond Enforcer's original scope: an optional

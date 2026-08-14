@@ -243,6 +243,7 @@ model Client {
 
   cloudCredential  CloudCredential?
   kmsCredential    ClientKmsCredential?
+  aiUsageRecords   AiUsageRecord[]
   users            User[]
   engagements      Engagement[]
   devices          Device[]
@@ -771,4 +772,21 @@ model ClientKmsCredential {
   secretAccessKeyEnc Json // EncryptedField — system-CMK-encrypted, see model comment
   createdBy          String // User.id
   createdAt          DateTime @default(now())
+}
+
+// One row per real AI provider call this app ever makes (src/ai/budget.ts)
+// — triage, NL query translation, attack-path narration alike. Nothing
+// sensitive lives here on purpose (no prompt, no response, just which
+// client and which feature) — this table exists purely to answer "has
+// this org hit its cap yet," not as an audit trail of what was asked.
+// Never written to at all while AI_TRIAGE_PROVIDER=noop, since a call
+// that costs nothing has nothing to cap.
+model AiUsageRecord {
+  id        String   @id @default(uuid())
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id])
+  endpoint  String // "triage" | "nlQuery" | "attackPath"
+  createdAt DateTime @default(now())
+
+  @@index([clientId, createdAt])
 }

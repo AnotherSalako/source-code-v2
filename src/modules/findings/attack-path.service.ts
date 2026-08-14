@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { prisma } from "../../db/prisma";
 import { attackPathAi } from "../../ai";
+import { checkAndRecordAiUsage } from "../../ai/budget";
 import { computeExploitabilityScore, RankedFinding } from "./clustering";
 import { findAttackPathCandidates, AttackPathCandidate } from "./attack-path";
 
@@ -29,7 +30,7 @@ export interface AttackPathResult extends AttackPathCandidate {
  * only `narrative`/`plausibility` end up null, the underlying signal never
  * disappears because a model call had a bad day.
  */
-export async function computeAttackPaths(engagementId: string): Promise<AttackPathResult[]> {
+export async function computeAttackPaths(engagementId: string, clientId: string): Promise<AttackPathResult[]> {
   const findings = await prisma.finding.findMany({
     where: { test: { engagementId }, status: { in: ["OPEN", "REMEDIATING", "RETESTED_FAIL"] } },
     select: {
@@ -59,16 +60,22 @@ export async function computeAttackPaths(engagementId: string): Promise<AttackPa
   const candidates = findAttackPathCandidates(ranked, assetCriticality);
   if (candidates.length === 0) return [];
 
-  const raw = await attackPathAi.narratePaths(
-    candidates.map((c, index) => ({
-      index,
-      entryTitle: c.entryTitle,
-      entrySeverity: c.entrySeverity,
-      targetTitle: c.targetTitle,
-      targetSeverity: c.targetSeverity,
-      targetCriticality: c.targetCriticality,
-    }))
-  );
+  // One real HTTP call narrates the whole batch (see AttackPathProvider's
+  // own comment) — one budget check/record per computeAttackPaths call,
+  // not one per candidate.
+  const budget = await checkAndRecordAiUsage(clientId, "attackPath");
+  const raw = budget.allowed
+    ? await attackPathAi.narratePaths(
+        candidates.map((c, index) => ({
+          index,
+          entryTitle: c.entryTitle,
+          entrySeverity: c.entrySeverity,
+          targetTitle: c.targetTitle,
+          targetSeverity: c.targetSeverity,
+          targetCriticality: c.targetCriticality,
+        }))
+      )
+    : null;
 
   const narrationByIndex = new Map<number, { narrative: string; plausibility: "LOW" | "MEDIUM" | "HIGH" }>();
   if (raw) {

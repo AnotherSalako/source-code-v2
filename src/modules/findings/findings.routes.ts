@@ -17,6 +17,7 @@ import { clusterFindings, computeExploitabilityScore } from "./clustering";
 import { computeFalsePositiveScore } from "./false-positive-score";
 import { resolveNlQuery } from "./nl-query.service";
 import { computeAttackPaths } from "./attack-path.service";
+import { checkAndRecordAiUsage } from "../../ai/budget";
 import { sideEffectLimiter } from "../../middleware/rate-limit";
 
 export const findingsRouter = Router({ mergeParams: true });
@@ -196,11 +197,13 @@ findingsRouter.post(
       return;
     }
 
-    const result = await resolveNlQuery(engagementId, parsed.data.question);
+    const result = await resolveNlQuery(engagementId, engagement.clientId, parsed.data.question);
     if (!result.understood) {
       res.json({
         understood: false,
-        message: "Couldn't turn that into a search — no AI query provider configured, or the question didn't map to anything searchable. Try rephrasing, or use the filter fields on the findings list directly.",
+        message:
+          result.reason ??
+          "Couldn't turn that into a search — no AI query provider configured, or the question didn't map to anything searchable. Try rephrasing, or use the filter fields on the findings list directly.",
         findings: [],
       });
       return;
@@ -333,7 +336,7 @@ findingsRouter.get("/engagements/:engagementId/attack-paths", requireAuth, async
     return;
   }
 
-  const paths = await computeAttackPaths(engagementId);
+  const paths = await computeAttackPaths(engagementId, engagement.clientId);
   res.json({ paths });
 });
 
@@ -458,6 +461,12 @@ findingsRouter.post("/findings/:id/triage", requireAuth, requireRole("SECURITY_A
   });
   if (!finding || !assertOwnOrg(req, finding.test.engagement.clientId)) {
     res.status(404).json({ error: "Not found" });
+    return;
+  }
+
+  const budget = await checkAndRecordAiUsage(finding.test.engagement.clientId, "triage");
+  if (!budget.allowed) {
+    res.json({ drafted: false, message: budget.reason });
     return;
   }
 

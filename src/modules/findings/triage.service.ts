@@ -3,6 +3,7 @@ import { encryptField } from "../../crypto/envelope";
 import { tenantKms } from "../../crypto/tenant";
 import { logger } from "../../config/logger";
 import { aiTriage } from "../../ai";
+import { checkAndRecordAiUsage } from "../../ai/budget";
 
 /**
  * Fire-and-forget AI triage on finding creation (both the manual and
@@ -23,6 +24,12 @@ export async function triageFinding(
   input: { title: string; description: string; severity: string }
 ): Promise<void> {
   try {
+    const budget = await checkAndRecordAiUsage(clientId, "triage");
+    if (!budget.allowed) {
+      logger.warn({ findingId, clientId, reason: budget.reason }, "AI triage skipped — budget cap reached");
+      return;
+    }
+
     const draft = await aiTriage.draftTriage(input);
     if (!draft) return; // no provider configured, or the request failed — leave the finding undrafted, not an error
 

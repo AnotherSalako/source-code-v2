@@ -409,6 +409,9 @@ const usersByEmail = new Map<string, FakeUserRow>();
 const clientsById = new Map<string, FakeClientRow>();
 const cloudCredentialsByClientId = new Map<string, FakeCloudCredentialRow>();
 const clientKmsCredentialsByClientId = new Map<string, FakeClientKmsCredentialRow>();
+// Array, not a Map — unlike the credential tables above, a client can have
+// any number of usage records, there's no unique-per-client constraint.
+const aiUsageRecords: { id: string; clientId: string; endpoint: string; createdAt: Date }[] = [];
 const engagementsById = new Map<string, FakeEngagementRow>();
 const assetsById = new Map<string, FakeAssetRow>();
 const testsById = new Map<string, FakeTestRow>();
@@ -575,6 +578,17 @@ const prismaMock = {
       delete: vi.fn(async ({ where }: any) => {
         const row = clientKmsCredentialsByClientId.get(where.clientId)!;
         clientKmsCredentialsByClientId.delete(where.clientId);
+        return row;
+      }),
+    },
+    aiUsageRecord: {
+      count: vi.fn(async ({ where }: any) => {
+        const cutoff = where?.createdAt?.gte as Date | undefined;
+        return aiUsageRecords.filter((r) => r.clientId === where.clientId && (!cutoff || r.createdAt >= cutoff)).length;
+      }),
+      create: vi.fn(async ({ data }: any) => {
+        const row = { id: nextId("aiusagerecord"), createdAt: new Date(), ...data };
+        aiUsageRecords.push(row);
         return row;
       }),
     },
@@ -1213,6 +1227,15 @@ export function seedClientKmsCredential(clientId: string, row: Partial<FakeClien
   return full;
 }
 
+export function seedAiUsageRecord(clientId: string, overrides: { endpoint?: string; createdAt?: Date } = {}): void {
+  aiUsageRecords.push({
+    id: nextId("aiusagerecord"),
+    clientId,
+    endpoint: overrides.endpoint ?? "triage",
+    createdAt: overrides.createdAt ?? new Date(),
+  });
+}
+
 export function seedEngagement(row: Partial<FakeEngagementRow> & { id: string; clientId: string }): FakeEngagementRow {
   const full: FakeEngagementRow = {
     status: "SCOPING",
@@ -1458,6 +1481,7 @@ export function resetFakeDb(): void {
   clientsById.clear();
   cloudCredentialsByClientId.clear();
   clientKmsCredentialsByClientId.clear();
+  aiUsageRecords.length = 0;
   engagementsById.clear();
   assetsById.clear();
   testsById.clear();

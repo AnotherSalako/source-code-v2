@@ -122,6 +122,19 @@ export const env = {
   anthropicApiKey: aiTriageProvider === "anthropic" ? required("ANTHROPIC_API_KEY") : process.env.ANTHROPIC_API_KEY,
   aiTriageModel: process.env.AI_TRIAGE_MODEL ?? "claude-sonnet-5",
 
+  // Hard per-org budget caps on real AI calls (src/ai/budget.ts) — checked
+  // and recorded (AiUsageRecord) before every real Anthropic call across
+  // triage, NL querying, and attack-path narration. DB-backed on purpose,
+  // not express-rate-limit's in-memory counters: this app runs on Vercel
+  // serverless, where in-memory state doesn't survive a cold start, so an
+  // in-memory cap would silently reset and stop actually capping anything.
+  // Meaningless (and skipped entirely) while AI_TRIAGE_PROVIDER=noop, since
+  // nothing costs money to cap yet — exists so the caps are already in
+  // place *before* anyone flips that switch, not added under pressure
+  // after a surprise bill.
+  aiDailyCallCap: parseInt(process.env.AI_DAILY_CALL_CAP ?? "200", 10),
+  aiMonthlyCallCap: parseInt(process.env.AI_MONTHLY_CALL_CAP ?? "3000", 10),
+
   // Error tracking (src/config/sentry.ts) — unset means errors only go to
   // the pino logs on this machine, same as always; set it to also get every
   // unhandled exception/rejection and every 500 reported to Sentry.

@@ -790,3 +790,27 @@ model AiUsageRecord {
 
   @@index([clientId, createdAt])
 }
+
+// One row per full-database backup (src/modules/internal/backup.service.ts),
+// run daily via Vercel Cron. The row is metadata only — the actual dump
+// (every table's rows, gzip-compressed) lives as one ciphertext object in
+// object storage, encrypted the same way evidence/reports are: envelope
+// encryption under the system CMK, never a tenant key (a backup spans every
+// tenant, so no single tenant key could ever decrypt all of it). Restoring
+// requires src/scripts/restore-backup.ts run manually with real DB access —
+// deliberately not an HTTP route, since "wipe and reload the database" is
+// too destructive to expose over the network at all, even admin-gated.
+model DatabaseBackup {
+  id               String   @id @default(uuid())
+  storageKey       String
+  iv               String
+  authTag          String
+  encryptedDataKey String
+  kmsKeyId         String
+  keyVersion       Int
+  sizeBytes        Int
+  tableCounts      Json // { [modelName]: rowCount } — lets an admin sanity-check a backup without decrypting it
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
+}

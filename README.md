@@ -1575,27 +1575,57 @@ Team page / `POST /users` from then on.
 
 ## Backups
 
-Untested restores are a common blind spot — a backup you've never actually
-restored isn't a verified backup, it's an assumption. This was tested for
-real, not just documented: `pg_dump`/`pg_restore` binaries aren't available
-in this dev environment (no Docker daemon either to run a Postgres client
-image), so the mechanism was proven at the SQL level instead, against the
-real Supabase database — every row of two representative tables (one with
-a `jsonb` encrypted-field column, one with an enum column) was read out,
-written to disk, then recreated in an isolated `restore_test` schema
-(never touching the real tables) and re-inserted, with column types looked
-up from `information_schema` and cast explicitly rather than assumed —
-enums and encrypted `jsonb` blobs don't round-trip through a naive `INSERT`
-without that. Row counts and content matched exactly, encrypted fields came
-back byte-for-byte as opaque blobs (no special handling needed — they're
-just data as far as Postgres/backup tooling is concerned), and the scratch
-schema was dropped afterward.
+The Supabase project this app runs on (`adele`) is on the **Free plan**,
+which ships zero automatic backups — Supabase's own docs are explicit that
+daily backups start at Pro, and point-in-time recovery is a paid Pro+
+add-on; their stated recommendation for free-tier projects is to export
+data yourself and store it off-site. A dedicated, encrypted database with
+no backup plan is a regression against Enforcer's setup (which at least had
+a shared DB someone else was backing up), not just an open item — this
+closes that gap with a real mechanism rather than a manual reminder.
 
-What this proves: the *data* survives a dump-and-restore cycle correctly,
-including the encrypted columns and every enum type in the schema. What it
-doesn't replace: an actual `pg_dump`/`pg_restore` (or your platform's
-managed backup feature — Supabase's paid tiers include point-in-time
-recovery) run against a real environment with those tools installed. Do
-that before trusting backups with real client data; this is the one
-verification that couldn't be fully completed in this environment, unlike
-everything else claimed as "verified live" in this document.
+**How it works** (`src/modules/internal/backup.service.ts`): every table in
+the schema is read out through the normal Prisma client (no `pg_dump`
+binary involved — deliberately, since Vercel's serverless runtime can't
+run one anyway, the same constraint already documented for Nuclei/nmap),
+serialized to JSON, gzip-compressed, then envelope-encrypted under the
+system CMK using the exact same `encryptBuffer`/KMS machinery evidence
+files and reports already use, and uploaded to the same private Supabase
+Storage bucket. The resulting `DatabaseBackup` row holds only metadata
+(storage key, wrapped-DEK fields, size, per-table row counts) — never the
+plaintext, and never a bare copy of the ciphertext's decryption key outside
+that row. `GET /internal/scheduled-backup` runs this daily via Vercel Cron
+(`vercel.json`, protected by `CRON_SECRET` like every other internal cron
+route), and prunes backups beyond `BACKUP_RETENTION_COUNT` (default 14,
+rolling window) after each run. `GET /internal/backups`
+(`SECURITY_ADMIN`-only) lists backup metadata so anyone can confirm from
+the app itself that backups are actually happening, without needing direct
+database access.
+
+**Restoring** is deliberately a manually-run script
+(`scripts/restore-backup.ts`), never an HTTP route — "wipe every table and
+reload it" is too destructive to expose over the network at all, even
+admin-gated. Run with no `--confirm` flag, it downloads, decrypts,
+decompresses, and prints the target backup's table row counts without
+touching the database — a dry run that already proves the backup is intact
+and readable. Passed `--confirm-wipe-and-restore`, it wipes and reloads
+every table inside one Prisma transaction, in FK-dependency order (an
+explicit table order in `backup.service.ts`, checked by hand against every
+`@relation` in `schema.prisma` — children deleted before parents, parents
+recreated before children).
+
+**Verified for real** against the live `adele` database: `scripts/backup-now.ts`
+ran a genuine backup (real Prisma read of every table, real gzip, real AWS
+KMS envelope encryption, real upload to Supabase Storage), and
+`scripts/restore-backup.ts`'s dry run then downloaded that exact object,
+decrypted it, decompressed it, and printed matching row counts — a full,
+real round trip through every layer (KMS, object storage, compression,
+serialization) except the final destructive write. The actual
+wipe-and-reload path was intentionally **not** executed against this real,
+shared database during verification (the current dataset is this session's
+own live-test data, but running a full destructive restore purely to prove
+a point isn't worth the risk) — its correctness rests on the FK-order
+review above plus Prisma's own well-established `deleteMany`/`createMany`
+behavior, not on having actually pulled the trigger. Worth doing once
+before trusting this with real client data, the same way you'd want to
+test any restore procedure before you need it for real.

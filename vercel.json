@@ -9,6 +9,7 @@
   "crons": [
     { "path": "/api/internal/rotate-keys", "schedule": "0 3 * * *" },
     { "path": "/api/internal/scheduled-scans", "schedule": "0 4 * * *" },
-    { "path": "/api/internal/scheduled-watch", "schedule": "0 5 * * *" }
+    { "path": "/api/internal/scheduled-watch", "schedule": "0 5 * * *" },
+    { "path": "/api/internal/scheduled-backup", "schedule": "0 6 * * *" }
   ]
 }

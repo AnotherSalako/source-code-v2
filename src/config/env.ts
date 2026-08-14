@@ -139,4 +139,12 @@ export const env = {
   // the pino logs on this machine, same as always; set it to also get every
   // unhandled exception/rejection and every 500 reported to Sentry.
   sentryDsn: process.env.SENTRY_DSN,
+
+  // Full-database backups (src/modules/internal/backup.service.ts). The
+  // Supabase project this app runs on is on the Free plan, which ships zero
+  // automatic backups (daily backups/PITR are Pro-and-up add-ons) — this is
+  // this app's own replacement for that gap, not a supplement to one.
+  // How many most-recent backups to keep in object storage before the
+  // scheduled run prunes older ones (rolling window, not calendar-based).
+  backupRetentionCount: parseInt(process.env.BACKUP_RETENTION_COUNT ?? "14", 10),
 };

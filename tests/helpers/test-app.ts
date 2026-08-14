@@ -405,6 +405,19 @@ export interface FakeAuditLogRow {
   timestamp: Date;
 }
 
+export interface FakeDatabaseBackupRow {
+  id: string;
+  storageKey: string;
+  iv: string;
+  authTag: string;
+  encryptedDataKey: string;
+  kmsKeyId: string;
+  keyVersion: number;
+  sizeBytes: number;
+  tableCounts: unknown;
+  createdAt: Date;
+}
+
 const usersByEmail = new Map<string, FakeUserRow>();
 const clientsById = new Map<string, FakeClientRow>();
 const cloudCredentialsByClientId = new Map<string, FakeCloudCredentialRow>();
@@ -430,6 +443,7 @@ const enrollmentTokensById = new Map<string, FakeEnrollmentTokenRow>();
 const devicesById = new Map<string, FakeDeviceRow>();
 const agentCaKeyById = new Map<string, FakeAgentCaKeyRow>();
 const auditLogs: FakeAuditLogRow[] = [];
+const databaseBackupsById = new Map<string, FakeDatabaseBackupRow>();
 
 // Real UUIDs, not human-readable "prefix_N" strings — several Zod schemas
 // validate foreign-key fields with .uuid() (findings' assetId, engagements'
@@ -531,6 +545,7 @@ const prismaMock = {
     },
     cloudCredential: {
       findUnique: vi.fn(async ({ where }: any) => cloudCredentialsByClientId.get(where.clientId) ?? null),
+      findMany: vi.fn(async () => [...cloudCredentialsByClientId.values()]),
       upsert: vi.fn(async ({ where, create, update }: any) => {
         const existing = cloudCredentialsByClientId.get(where.clientId);
         if (existing) {
@@ -565,6 +580,7 @@ const prismaMock = {
     // paths break, not just this feature's own tests.
     clientKmsCredential: {
       findUnique: vi.fn(async ({ where }: any) => clientKmsCredentialsByClientId.get(where.clientId) ?? null),
+      findMany: vi.fn(async () => [...clientKmsCredentialsByClientId.values()]),
       upsert: vi.fn(async ({ where, create, update }: any) => {
         const existing = clientKmsCredentialsByClientId.get(where.clientId);
         if (existing) {
@@ -582,6 +598,7 @@ const prismaMock = {
       }),
     },
     aiUsageRecord: {
+      findMany: vi.fn(async () => [...aiUsageRecords]),
       count: vi.fn(async ({ where }: any) => {
         const cutoff = where?.createdAt?.gte as Date | undefined;
         return aiUsageRecords.filter((r) => r.clientId === where.clientId && (!cutoff || r.createdAt >= cutoff)).length;
@@ -1079,6 +1096,7 @@ const prismaMock = {
       }),
     },
     keyRef: {
+      findMany: vi.fn(async () => [...keyRefsById.values()]),
       create: vi.fn(async ({ data }: any) => {
         const row: FakeKeyRefRow = { id: nextId("keyref"), status: "ACTIVE", createdAt: new Date(), retiredAt: null, ...data };
         keyRefsById.set(row.id, row);
@@ -1097,6 +1115,7 @@ const prismaMock = {
       }),
     },
     enrollmentToken: {
+      findMany: vi.fn(async () => [...enrollmentTokensById.values()]),
       create: vi.fn(async ({ data }: any) => {
         const row: FakeEnrollmentTokenRow = { id: nextId("enrollmenttoken"), usedAt: null, usedByDeviceId: null, createdAt: new Date(), ...data };
         enrollmentTokensById.set(row.id, row);
@@ -1138,6 +1157,7 @@ const prismaMock = {
       }),
     },
     agentCaKey: {
+      findMany: vi.fn(async () => [...agentCaKeyById.values()]),
       findUnique: vi.fn(async ({ where }: any) => agentCaKeyById.get(where.id) ?? null),
       findUniqueOrThrow: vi.fn(async ({ where }: any) => {
         const row = agentCaKeyById.get(where.id);
@@ -1171,6 +1191,28 @@ const prismaMock = {
         if (where?.resourceId) all = all.filter((l) => l.resourceId === where.resourceId);
         if (where?.userId) all = all.filter((l) => l.userId === where.userId);
         return typeof take === "number" ? all.slice(0, take) : all;
+      }),
+    },
+    databaseBackup: {
+      findUnique: vi.fn(async ({ where }: any) => databaseBackupsById.get(where.id) ?? null),
+      findMany: vi.fn(async (args: any = {}) => {
+        const { orderBy, skip, take, select } = args;
+        let all = [...databaseBackupsById.values()];
+        if (orderBy?.createdAt === "desc") all = all.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+        if (typeof skip === "number") all = all.slice(skip);
+        if (typeof take === "number") all = all.slice(0, take);
+        if (select) return all.map((r) => Object.fromEntries(Object.keys(select).map((k) => [k, (r as any)[k]])));
+        return all;
+      }),
+      create: vi.fn(async ({ data }: any) => {
+        const row: FakeDatabaseBackupRow = { id: nextId("databasebackup"), createdAt: new Date(), ...data };
+        databaseBackupsById.set(row.id, row);
+        return row;
+      }),
+      delete: vi.fn(async ({ where }: any) => {
+        const row = databaseBackupsById.get(where.id)!;
+        databaseBackupsById.delete(where.id);
+        return row;
       }),
     },
     $transaction: vi.fn(async (opsOrFn: any) => {
@@ -1476,6 +1518,23 @@ export function seedDevice(
   return full;
 }
 
+export function seedDatabaseBackup(row: Partial<FakeDatabaseBackupRow> & { id: string }): FakeDatabaseBackupRow {
+  const full: FakeDatabaseBackupRow = {
+    storageKey: `backups/${row.id}`,
+    iv: "",
+    authTag: "",
+    encryptedDataKey: "",
+    kmsKeyId: "test-cmk",
+    keyVersion: 1,
+    sizeBytes: 0,
+    tableCounts: {},
+    createdAt: new Date(),
+    ...row,
+  };
+  databaseBackupsById.set(full.id, full);
+  return full;
+}
+
 export function resetFakeDb(): void {
   usersByEmail.clear();
   clientsById.clear();
@@ -1500,6 +1559,7 @@ export function resetFakeDb(): void {
   devicesById.clear();
   agentCaKeyById.clear();
   auditLogs.length = 0;
+  databaseBackupsById.clear();
 }
 
 /** The header value that authenticates a supertest request as the given (pre-seeded) user's email. */

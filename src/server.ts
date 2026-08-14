@@ -1,6 +1,7 @@
-import { initSentry, captureException } from "./config/sentry";
-initSentry(); // before anything else that might throw
-
+// initSentry() now runs inside createApp() itself (see app.ts) so it fires
+// for both this long-running entry point and the Vercel serverless one
+// (api/index.ts), which never executes this file.
+import { captureException } from "./config/sentry";
 import { createApp } from "./app";
 import { env } from "./config/env";
 import { logger } from "./config/logger";

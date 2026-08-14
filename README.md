@@ -1572,6 +1572,39 @@ Team page / `POST /users` from then on.
   exists purely so local dev can scan `127.0.0.1`. With it on, "Website
   scanning" (above) will happily scan your own private network if pointed
   at it.
+- Set `SENTRY_DSN` before treating this as production-ready — see "Error
+  tracking" below. The code path is real and wired correctly; without a real
+  DSN, every unhandled error still only reaches this instance's own logs,
+  which is fine for local dev but not something to find out about after the
+  fact for a real deployment.
+
+## Error tracking
+
+`src/config/sentry.ts` wraps `@sentry/node`: `initSentry()` calls
+`Sentry.init()` when `SENTRY_DSN` is set (a no-op, logged once at startup,
+when it isn't), and `captureException()` reports to it from three places —
+Express's global error handler (`app.ts`, every unhandled 500), and
+`process.on("unhandledRejection"/"uncaughtException")` in `server.ts` (the
+long-running/local-dev entry point only; see below).
+
+**Found and fixed during this session's security pass**: `initSentry()`
+originally only ran in `src/server.ts`, right before it calls
+`app.listen(...)`. The Vercel serverless entry point (`api/index.ts`) never
+executes `server.ts` at all — it imports `createApp()` directly — so on the
+actual deployed origin, Sentry never initialized regardless of whether
+`SENTRY_DSN` was set. `captureException()` calls inside the Express error
+handler (which *does* run on Vercel, since it's part of `createApp()`)
+would have silently gone nowhere. This was exactly the kind of gap flagged
+as a risk before it was verified — now fixed by moving the `initSentry()`
+call inside `createApp()` itself, so it runs for both entry points; full
+test suite (335 tests) still passes with every route test's `createApp()`
+call now exercising this on every run.
+
+**Still outstanding**: no real `SENTRY_DSN` is configured for this
+deployment yet — that needs a real Sentry account and project, the same
+"needs a real credential from you" pattern as AWS/Anthropic/VirusTotal
+earlier in this document. Until then, error tracking is correctly wired but
+inert; errors still land in Vercel's own function logs either way.
 
 ## Backups
 

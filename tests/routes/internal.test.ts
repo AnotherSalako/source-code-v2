@@ -1,6 +1,6 @@
 import request from "supertest";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { resetFakeDb } from "../helpers/test-app";
+import { resetFakeDb, seedUser, authHeader } from "../helpers/test-app";
 
 const { createApp } = await import("../../src/app");
 const app = createApp();
@@ -62,5 +62,41 @@ describe("GET /internal/scheduled-watch", () => {
     const res = await request(app).get("/internal/scheduled-watch").set("Authorization", `Bearer ${REAL_CRON_SECRET}`).expect(200);
     expect(res.body).toHaveProperty("started");
     expect(res.body).toHaveProperty("skipped");
+  });
+});
+
+describe("GET /internal/scheduled-backup", () => {
+  it("401s with a wrong/missing bearer secret", async () => {
+    await request(app).get("/internal/scheduled-backup").expect(401);
+  });
+
+  it("200s with the correct secret and actually runs a real backup (not mocked — same fake DB/KMS/storage every other test uses)", async () => {
+    if (!REAL_CRON_SECRET) return;
+    const res = await request(app).get("/internal/scheduled-backup").set("Authorization", `Bearer ${REAL_CRON_SECRET}`).expect(200);
+    expect(res.body).toHaveProperty("id");
+    expect(res.body).toHaveProperty("tableCounts");
+  });
+});
+
+describe("GET /internal/backups", () => {
+  it("401s with no auth", async () => {
+    await request(app).get("/internal/backups").expect(401);
+  });
+
+  it("403s for a non-admin role", async () => {
+    seedUser({ email: "tech@acme.com", name: "Tech", role: "TECHNICAL_CLIENT", orgId: "some-org" });
+    await request(app).get("/internal/backups").set("x-test-user", authHeader("tech@acme.com")).expect(403);
+  });
+
+  it("200s for a SECURITY_ADMIN and lists metadata only, never decryption material", async () => {
+    if (!REAL_CRON_SECRET) return;
+    seedUser({ email: "admin@example.com", name: "Admin", role: "SECURITY_ADMIN", orgId: null });
+
+    await request(app).get("/internal/scheduled-backup").set("Authorization", `Bearer ${REAL_CRON_SECRET}`).expect(200);
+
+    const res = await request(app).get("/internal/backups").set("x-test-user", authHeader("admin@example.com")).expect(200);
+    expect(res.body.backups.length).toBeGreaterThan(0);
+    expect(res.body.backups[0]).not.toHaveProperty("iv");
+    expect(res.body.backups[0]).not.toHaveProperty("encryptedDataKey");
   });
 });

@@ -13,7 +13,7 @@ import "./middleware/types";
 import { env } from "./config/env";
 import { logger } from "./config/logger";
 import { generalLimiter } from "./middleware/rate-limit";
-import { captureException } from "./config/sentry";
+import { initSentry, captureException } from "./config/sentry";
 
 import { authRouter } from "./modules/auth/auth.routes";
 import { usersRouter } from "./modules/users/users.routes";
@@ -41,6 +41,16 @@ import { sbomRouter } from "./modules/sbom/sbom.routes";
 import { byokRouter } from "./modules/clients/byok.routes";
 
 export function createApp() {
+  // Called here, not just in server.ts, because the Vercel serverless entry
+  // point (api/index.ts) imports createApp() directly and never runs
+  // server.ts at all — initSentry() living only in server.ts meant it never
+  // ran in production regardless of whether SENTRY_DSN was set. Safe to call
+  // on every createApp() invocation: it's a no-op when SENTRY_DSN is unset,
+  // and Sentry.init() itself is idempotent (only ever called once per cold
+  // start in practice, same lifecycle as the Prisma client / KMS provider
+  // singletons below).
+  initSentry();
+
   // @clerk/express reads these from process.env itself (that's the whole
   // point of the convention) rather than through this app's own env.ts — but
   // failing fast here beats Clerk's own lazy failure on first request.

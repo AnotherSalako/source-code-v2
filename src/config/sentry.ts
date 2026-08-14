@@ -40,7 +40,23 @@ export function initSentry(): void {
   });
 }
 
-export function captureException(err: unknown): void {
+/**
+ * Async and awaited by every caller (app.ts's error handler, server.ts's
+ * process handlers) — Sentry.captureException() only queues the event,
+ * it doesn't send it; delivery happens over the network asynchronously in
+ * the background. On Vercel specifically, the function's execution
+ * context can be frozen the instant the HTTP response finishes sending,
+ * which kills that in-flight delivery before it ever reaches Sentry —
+ * confirmed for real: an earlier version of this function returned a
+ * clean 500 from a deliberate test error, but the event never showed up
+ * in Sentry's API at all. Sentry.flush() waits for the queue to actually
+ * drain (bounded by the timeout) before this resolves, so callers that
+ * await it and only send their response afterward are guaranteed the
+ * event either sent or the timeout was hit — not a race against process
+ * suspension.
+ */
+export async function captureException(err: unknown): Promise<void> {
   if (!env.sentryDsn) return;
   Sentry.captureException(err);
+  await Sentry.flush(2000);
 }

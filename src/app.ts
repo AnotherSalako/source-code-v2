@@ -119,9 +119,14 @@ export function createApp() {
   app.use(byokRouter);
   app.use("/audit-logs", auditRouter);
 
-  app.use((err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  app.use(async (err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
     (req.log ?? logger).error({ err }, "Unhandled request error");
-    captureException(err);
+    // Awaited, not fire-and-forget: on Vercel the function's execution
+    // context can freeze the instant the response finishes, which would
+    // silently kill Sentry's in-flight delivery if this ran after
+    // res.json() rather than before it — see captureException's own
+    // comment in config/sentry.ts.
+    await captureException(err);
     res.status(500).json({ error: "Internal server error" });
   });
 

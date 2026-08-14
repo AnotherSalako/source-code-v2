@@ -1712,6 +1712,20 @@ scheduled-scan sweep's heartbeat — if `SENTRY_DSN` ever gets rotated or
 misconfigured, this is how to find out on purpose rather than during a real
 incident.
 
+**A second, more serious bug surfaced verifying this for real** (checked
+via the Sentry API, not just "the route returned 500 so it must have
+worked"): the very first test event never arrived at Sentry at all, zero
+issues in the project. Root cause — `Sentry.captureException()` only
+*queues* an event; delivery happens asynchronously over the network
+afterward. `app.ts`'s error handler called it fire-and-forget, then sent
+the response immediately. On Vercel specifically, the function's execution
+context can freeze the instant the response finishes sending, killing that
+in-flight delivery before it ever reaches Sentry — a well-known serverless
+gotcha, and exactly what happened here. Fixed by making `captureException`
+`async` and `await`ing `Sentry.flush(2000)` before it resolves, and making
+the error handler itself `async`, awaiting `captureException()` **before**
+calling `res.json()` — so the function can't be frozen mid-delivery.
+
 **Data-collection defaults were overridden, not left as-is** — this SDK
 version's un-configured defaults collect full HTTP request/response bodies
 and local stack-frame variable values on every captured error, which is

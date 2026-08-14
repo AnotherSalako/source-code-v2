@@ -13,11 +13,11 @@ import { prisma } from "./db/prisma";
 // than every client-facing request dying with it.
 process.on("unhandledRejection", (reason) => {
   logger.error({ reason }, "Unhandled rejection");
-  captureException(reason);
+  void captureException(reason);
 });
 process.on("uncaughtException", (err) => {
   logger.error({ err }, "Uncaught exception");
-  captureException(err);
+  void captureException(err);
 });
 
 // A ScanJob's QUEUED/RUNNING state is only ever advanced by this same

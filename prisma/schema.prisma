@@ -242,6 +242,7 @@ model Client {
   kmsKeyId String?
 
   cloudCredential  CloudCredential?
+  kmsCredential    ClientKmsCredential?
   users            User[]
   engagements      Engagement[]
   devices          Device[]
@@ -746,4 +747,28 @@ model CloudCredential {
   lastScannedAt DateTime?
   createdBy     String // User.id
   createdAt     DateTime  @default(now())
+}
+
+// BYOK — a client's own AWS KMS key, in their own account, replaces this
+// app's system CMK for THEIR field encryption specifically (src/crypto/tenant.ts's
+// tenantKms() checks this before falling back to Client.kmsKeyId, which
+// only ever pointed at a key inside *this app's own* configured KMS
+// account). The access credential stored here is what makes this real
+// BYOK rather than a second name for the existing per-tenant-key feature:
+// it lets Jupiter call a key it doesn't own.
+//
+// accessKeyIdEnc/secretAccessKeyEnc are encrypted under the SYSTEM CMK
+// specifically, never under a tenant key — encrypting the credential that
+// grants access to a client's key using that same key would be circular,
+// and there's no way to bootstrap out of it.
+model ClientKmsCredential {
+  id                 String   @id @default(uuid())
+  clientId           String   @unique
+  client             Client   @relation(fields: [clientId], references: [id])
+  keyId              String // the client's own KMS key ARN/ID — never a key this app's own credentials could reach on their own
+  region             String
+  accessKeyIdEnc     Json // EncryptedField — system-CMK-encrypted, see model comment
+  secretAccessKeyEnc Json // EncryptedField — system-CMK-encrypted, see model comment
+  createdBy          String // User.id
+  createdAt          DateTime @default(now())
 }

@@ -60,6 +60,9 @@ vi.mock("../../src/modules/cspm/cspm-scanner", () => ({
 vi.mock("../../src/modules/sbom/osv-client", () => ({
   findVulnerabilities: vi.fn().mockResolvedValue([]),
 }));
+vi.mock("../../src/crypto/kms-verify", () => ({
+  verifyKmsCredential: vi.fn().mockResolvedValue({ valid: true }),
+}));
 vi.mock("../../src/modules/findings/import.service", () => ({
   importScanItems: vi.fn().mockResolvedValue({ createdIds: [], skipped: [] }),
 }));
@@ -138,6 +141,16 @@ export interface FakeCloudCredentialRow {
   secretAccessKeyEnc: unknown;
   region: string;
   lastScannedAt: Date | null;
+  createdBy: string;
+  createdAt: Date;
+}
+
+export interface FakeClientKmsCredentialRow {
+  id: string;
+  keyId: string;
+  region: string;
+  accessKeyIdEnc: unknown;
+  secretAccessKeyEnc: unknown;
   createdBy: string;
   createdAt: Date;
 }
@@ -395,6 +408,7 @@ export interface FakeAuditLogRow {
 const usersByEmail = new Map<string, FakeUserRow>();
 const clientsById = new Map<string, FakeClientRow>();
 const cloudCredentialsByClientId = new Map<string, FakeCloudCredentialRow>();
+const clientKmsCredentialsByClientId = new Map<string, FakeClientKmsCredentialRow>();
 const engagementsById = new Map<string, FakeEngagementRow>();
 const assetsById = new Map<string, FakeAssetRow>();
 const testsById = new Map<string, FakeTestRow>();
@@ -538,6 +552,29 @@ const prismaMock = {
       delete: vi.fn(async ({ where }: any) => {
         const row = cloudCredentialsByClientId.get(where.clientId)!;
         cloudCredentialsByClientId.delete(where.clientId);
+        return row;
+      }),
+    },
+    // tenantKms() (src/crypto/tenant.ts) checks this on EVERY call, for
+    // every client, across nearly every route in the app — findUnique
+    // must default to null for any client that was never explicitly
+    // seeded with BYOK, or the entire suite's existing encrypt/decrypt
+    // paths break, not just this feature's own tests.
+    clientKmsCredential: {
+      findUnique: vi.fn(async ({ where }: any) => clientKmsCredentialsByClientId.get(where.clientId) ?? null),
+      upsert: vi.fn(async ({ where, create, update }: any) => {
+        const existing = clientKmsCredentialsByClientId.get(where.clientId);
+        if (existing) {
+          Object.assign(existing, update);
+          return existing;
+        }
+        const row: FakeClientKmsCredentialRow = { id: nextId("clientkmscredential"), createdAt: new Date(), ...create };
+        clientKmsCredentialsByClientId.set(where.clientId, row);
+        return row;
+      }),
+      delete: vi.fn(async ({ where }: any) => {
+        const row = clientKmsCredentialsByClientId.get(where.clientId)!;
+        clientKmsCredentialsByClientId.delete(where.clientId);
         return row;
       }),
     },
@@ -1161,6 +1198,21 @@ export function seedCloudCredential(clientId: string, row: Partial<FakeCloudCred
   return full;
 }
 
+export function seedClientKmsCredential(clientId: string, row: Partial<FakeClientKmsCredentialRow> = {}): FakeClientKmsCredentialRow {
+  const full: FakeClientKmsCredentialRow = {
+    id: nextId("clientkmscredential"),
+    keyId: "test-client-key",
+    region: "us-east-1",
+    accessKeyIdEnc: null,
+    secretAccessKeyEnc: null,
+    createdBy: "user_admin",
+    createdAt: new Date(),
+    ...row,
+  };
+  clientKmsCredentialsByClientId.set(clientId, full);
+  return full;
+}
+
 export function seedEngagement(row: Partial<FakeEngagementRow> & { id: string; clientId: string }): FakeEngagementRow {
   const full: FakeEngagementRow = {
     status: "SCOPING",
@@ -1405,6 +1457,7 @@ export function resetFakeDb(): void {
   usersByEmail.clear();
   clientsById.clear();
   cloudCredentialsByClientId.clear();
+  clientKmsCredentialsByClientId.clear();
   engagementsById.clear();
   assetsById.clear();
   testsById.clear();

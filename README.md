@@ -224,11 +224,13 @@ real, separate future work, tracked below.)
   system key. The app **never creates KMS keys itself** (see the IAM note
   in `src/crypto/providers/aws-kms.ts`); provisioning each tenant's key is
   infra work (Terraform/console), done once per client before assigning it
-  via the PATCH endpoint. Inherits this provider's existing "untested
-  against a live AWS account" caveat (see "Deferred to v2" below) — the
-  per-tenant code path is ordinary parameterized `GenerateDataKeyCommand`
-  usage, same SDK call the system key already makes, just confirm it
-  against your own account.
+  via the PATCH endpoint. **Live-verified against a real AWS account**
+  (no longer just "should work"): `DescribeKey`/`GenerateDataKey`/`Decrypt`
+  all confirmed, and a full `encryptField`/`decryptField` round trip through
+  the real key — see `src/crypto/index.ts`'s comment for what that took
+  (both an IAM identity policy *and* the key's own resource policy have to
+  grant access; missing either produces `AccessDeniedException` even
+  though the other looks correctly configured).
 
 **Deliberately out of scope for this pass:** the app doesn't provision AWS
 KMS keys (infra work, not app code); there's no bulk "migrate all of
@@ -238,6 +240,53 @@ wasn't built — assigning a key only affects what's encrypted from that
 point forward); and rotating a *tenant's own* key to a new version isn't
 implemented (`rotateFieldKey` currently just skips non-system-key records
 rather than rotating them in place).
+
+## BYOK — bring your own key
+
+The genuinely-BYOK tier `tenantKms()` checks *before* falling back to the
+per-tenant-keys feature above: `PUT /clients/:id/kms-credential`
+(`src/modules/clients/byok.routes.ts`) lets a client hand over a real AWS
+KMS key **in their own AWS account**, reached via their own access
+credentials — not a key inside this app's own configured AWS account,
+which is all `Client.kmsKeyId` ever was. `tenantKms()`'s resolution order
+is now three tiers: a real BYOK credential, then `Client.kmsKeyId`, then
+the shared system key — every tier opt-in and additive, same "nothing
+forced" precedent the per-tenant-key feature set.
+
+**Verified before it's ever stored, the same way CSPM's and the endpoint
+agent's credentials are.** The PUT handler makes one real
+`GenerateDataKey` + `Decrypt` round trip against the *exact* key given
+before saving anything — proving this credential can actually use this
+specific key, not just that it authenticates against AWS at all (a
+materially different, stronger check than "do these keys work for
+something"). A credential that fails is rejected with AWS's own error
+message. `GET`/`DELETE` follow the same write-only discipline as every
+other stored credential in this app — the secret is never returned once
+stored.
+
+**The one genuinely sharp edge, and it's disclosed here on purpose, not
+buried:** the access credential itself is encrypted under the *system*
+key, never a tenant key (circular otherwise — you can't bootstrap
+decrypting the key that grants access to a key using that same key).
+But data *encrypted via BYOK* is a different matter: this app never has
+independent custody of a client's own AWS key, so if a `ClientKmsCredential`
+is deleted, every record it encrypted becomes permanently undecryptable
+from this app's side — not a bug, the correct and expected consequence of
+real BYOK. Removing or rotating a BYOK credential needs a real migration
+plan (re-encrypt under a new key first), the same category of concern as
+losing a client's own key entirely — this app was never in a position to
+prevent that, by design.
+
+Live-verified end to end against a real AWS account: stored a real
+credential (system-key-encrypted), confirmed `tenantKms()` resolves a
+genuine `AwsKmsProvider` instance for a BYOK-configured client rather
+than the tenant-scoped wrapper every other tier uses, and ran a real
+`encryptField`/`decryptField` round trip through it. One honest scope
+note: verification reused the same AWS account already configured
+elsewhere in this project rather than a literally separate client
+account (none was available) — what's proven is that the *code path* is
+real (real AWS calls, real system-key credential encryption, real
+three-tier resolution), not literally a second tenant's infrastructure.
 
 ## Endpoint agent enrollment
 
@@ -1277,6 +1326,9 @@ GET    /clients                              (security_admin: all; client roles:
 GET    /clients/:id
 GET    /clients/:id/findings-history         (aggregated across every engagement for the client)
 PATCH  /clients/:id/kms-key                  (security_admin; assigns a dedicated per-tenant key — see "Per-tenant encryption keys")
+PUT    /clients/:id/kms-credential           (security_admin; real BYOK — verifies against AWS before storing — see "BYOK")
+GET    /clients/:id/kms-credential           (security_admin; status only, never the secret)
+DELETE /clients/:id/kms-credential           (security_admin)
 POST   /clients/:id/devices/enrollment-tokens (security_admin; single-use, 30-min TTL — see "Endpoint agent enrollment")
 GET    /clients/:id/devices                  (metadata only — no key material ever returned)
 PATCH  /devices/:id/revoke                   (security_admin)
